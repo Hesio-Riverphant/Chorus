@@ -32,8 +32,21 @@ function Get-PlainTree([string]$Root) {
     }
 }
 
+function Get-ChorusFileHash([string]$Path) {
+    # Native installer launches must not depend on PowerShell module discovery.
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    $stream = $null
+    try {
+        $stream = [IO.File]::OpenRead($Path)
+        return [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '')
+    } finally {
+        if ($stream) { $stream.Dispose() }
+        $algorithm.Dispose()
+    }
+}
+
 function Get-FileRecord($Item) {
-    return [pscustomobject]@{ path = $Item.FullName; bytes = $Item.Length; sha256 = (Get-FileHash -LiteralPath $Item.FullName -Algorithm SHA256).Hash }
+    return [pscustomobject]@{ path = $Item.FullName; bytes = $Item.Length; sha256 = Get-ChorusFileHash $Item.FullName }
 }
 
 function Get-ChorusBundlePlan([string]$Root, [bool]$Installed = $false) {
@@ -305,7 +318,7 @@ function Remove-ChorusPlan($Plan) {
     if ($actual.Count -ne ($Plan.files.Count + $Plan.directories.Count)) { throw 'Directory contents changed; stopped.' }
     foreach ($file in $Plan.files) {
         Assert-PlainPath $file.path | Out-Null
-        if (-not (Test-Within $file.path $Plan.root) -or (Get-FileHash -LiteralPath $file.path -Algorithm SHA256).Hash -ne $file.sha256) { throw 'Removal file changed; stopped.' }
+        if (-not (Test-Within $file.path $Plan.root) -or (Get-ChorusFileHash $file.path) -ne $file.sha256) { throw 'Removal file changed; stopped.' }
     }
     # Literal per-file deletes and empty-only directory deletes never sweep up
     # a project or a file created after confirmation. No recursive removal.

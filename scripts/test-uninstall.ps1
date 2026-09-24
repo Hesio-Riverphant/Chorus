@@ -40,6 +40,11 @@ try {
     Reject { Resolve-ChorusUninstaller @($hostile) $installed } 'Extra command accepted'
     $plan = Get-ChorusBundlePlan $portable
     Check ($plan.files.Count -eq 6) 'Portable plan is incomplete'
+    $withoutHashCmdlet = & {
+        function Get-FileHash { throw 'Unavailable hash cmdlet fixture' }
+        Get-ChorusBundlePlan $portable
+    }
+    Check ($withoutHashCmdlet.files.Count -eq 6) 'Uninstall depends on hash cmdlet discovery'
     Check ((Get-ChorusBundlePlan $installed $true).files.Count -eq 7) 'Installed uninstaller absent from plan'
     $unknown = Write-Fixture 'portable/my-project/notes.txt' 'must survive'
     Reject { Get-ChorusBundlePlan $portable } 'Unknown project directory accepted'
