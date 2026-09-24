@@ -1,6 +1,7 @@
 'use strict';
 // This test may install software only in a disposable hosted CI runner.
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
+const os = require('node:os');
 const { spawnSync } = require('node:child_process');
 if (process.platform !== 'win32' || process.env.GITHUB_ACTIONS !== 'true' || process.env.RUNNER_ENVIRONMENT !== 'github-hosted' || !process.env.RUNNER_TEMP) {
   throw new Error('Windows hosted CI runner required; no local installation is performed.');
@@ -16,9 +17,10 @@ const registrations = () => JSON.parse(run('powershell.exe', ['-NoProfile', '-Co
   if (registrations().length) throw new Error('Existing Chorus installation must not be changed by this test.');
   const runner = fs.realpathSync(process.env.RUNNER_TEMP);
   const fixture = fs.mkdtempSync(path.join(runner, 'chorus-install-check-'));
-  const target = path.join(fixture, 'app'), data = path.join(fixture, 'isolated-data');
+  const target = path.join(fixture, 'app');
+  // Match the packaged bootstrap's strict temporary-directory isolation gate.
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'convoke-release-smoke-'));
   if (/\s/.test(target)) throw new Error('CI install fixture must have an unambiguous NSIS destination.');
-  fs.mkdirSync(data);
   const current = JSON.parse(fs.readFileSync('dist/CURRENT-RELEASE.json'));
   const installer = current.artifacts.find(item => item.path.endsWith('-setup.exe'));
   if (!installer) throw new Error('No current Windows installer.');
