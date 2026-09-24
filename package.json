@@ -23,6 +23,7 @@
     "electron-builder": "26.15.3"
   },
   "productName": "Chorus",
+  "desktopName": "chorus.desktop",
   "engines": {
     "node": ">=22.12.0"
   },

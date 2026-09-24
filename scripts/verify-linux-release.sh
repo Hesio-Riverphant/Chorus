@@ -7,7 +7,7 @@ release_dir=$(node -p "require('./dist/CURRENT-RELEASE.json').directory")
 release_dir="$PWD/dist/$release_dir"
 version=$(node -p "require('./package.json').version")
 zip_file="$release_dir/artifacts/Chorus-$version-linux-x64.zip"
-deb_file="$release_dir/artifacts/Chorus-$version-linux-x64.deb"
+deb_file="$release_dir/artifacts/Chorus-$version-linux-amd64.deb"
 zip_dir="$release_dir/zip-verification"
 mkdir "$zip_dir"
 unzip -q "$zip_file" -d "$zip_dir"

@@ -39,6 +39,7 @@ function builderConfiguration(sourceRoot, output) {
       artifactName: 'Chorus-${version}-windows-${arch}-setup.${ext}',
     },
     linux: {
+      syncDesktopName: true,
       target: ['deb', 'zip'],
       icon: path.join(sourceRoot, 'src/renderer/assets/convoke.png'),
       category: 'Development',

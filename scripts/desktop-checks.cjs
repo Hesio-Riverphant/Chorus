@@ -99,54 +99,95 @@ module.exports = async function desktopChecks({ win, persistence, check }) {
     return /归档房间/.test(document.querySelector('#popMenu').textContent) &&
       /归档聊天但不归档房间/.test(document.querySelector('#popMenu').textContent);
   }));
-  check('通过房间菜单归档聊天，房间保持可用', await page(async () => {
-    const button = [...document.querySelectorAll('#popMenu button')].find((el) => el.textContent.includes('归档聊天但不归档房间'));
-    button.click(); document.querySelector('#appDialogAccept').click(); await new Promise((resolve) => setTimeout(resolve, 150));
-    return document.querySelector('#roomName').textContent === '历史验收' &&
-      document.querySelectorAll('#messages [data-msg-id]').length === 0;
+  const waitForArchiveState = async (label, observe) => {
+    const started = Date.now(); let last;
+    do {
+      last = await observe();
+      if (last.ok) return true;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    } while (Date.now() - started < 3000);
+    console.error('Archive UI wait failed:', JSON.stringify({ label, elapsedMs: Date.now() - started, ...last }));
+    return false;
+  };
+  const roomView = roomId => page(id => ({
+    currentRoomId: state.currentRoomId,
+    roomName: document.querySelector('#roomName').textContent,
+    exists: state.rooms.some(room => room.id === id),
+    archived: !!state.rooms.find(room => room.id === id)?.archivedAt,
+    messageCount: document.querySelectorAll('#messages [data-msg-id]').length,
+    listed: [...document.querySelectorAll('#roomList .side-item-name')].some(el => el.textContent === '历史验收'),
+    historyRow: [...document.querySelectorAll('#archivedRoomList .skill-row')].some(el => el.textContent.includes('历史验收')),
+    settingsHidden: document.querySelector('#settingsModal').hidden,
+    obsoleteTrashList: !!document.querySelector('#trashList'),
+  }), roomId);
+  await page(() => {
+    [...document.querySelectorAll('#popMenu button')].find(el => el.textContent.includes('归档聊天但不归档房间')).click();
+    document.querySelector('#appDialogAccept').click();
+  });
+  check('通过房间菜单归档聊天，房间保持可用', await waitForArchiveState('archive chat', async () => {
+    const view = await roomView(room.id), archiveCount = persistence.listArchives(room.id).length;
+    const messageCount = persistence.getMessages(room.id).length;
+    return { ok: view.currentRoomId === room.id && view.roomName === '历史验收' && view.listed && !view.archived &&
+      view.messageCount === 0 && archiveCount === 1 && messageCount === 0, view, archiveCount, messageCount };
   }));
   check('聊天归档实际落盘', persistence.listArchives(room.id).length === 1 && persistence.getMessages(room.id).length === 0);
-  check('通过菜单归档整个房间，历史页可以恢复', await page(async (roomId) => {
+  await page(() => {
     document.querySelector('#roomList .side-item.active .row-menu').click();
-    [...document.querySelectorAll('#popMenu button')].find((el) => el.textContent.trim() === '归档房间').click();
+    [...document.querySelectorAll('#popMenu button')].find(el => el.textContent.trim() === '归档房间').click();
     document.querySelector('#appDialogAccept').click();
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    const hidden = ![...document.querySelectorAll('#roomList .side-item-name')].some((el) => el.textContent === '历史验收');
-    document.querySelector('#historyBtn').click();
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    const row = [...document.querySelectorAll('#archivedRoomList .skill-row')].find((el) => el.textContent.includes('历史验收'));
-    if (!row) return false;
-    [...row.querySelectorAll('button')].find((el) => el.textContent.includes('恢复')).click();
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    return hidden && state.rooms.find((item) => item.id === roomId)?.archivedAt == null;
-  }, room.id));
+  });
+  const hidden = await waitForArchiveState('archive room', async () => {
+    const view = await roomView(room.id), storedArchived = !!persistence.listRooms().find(item => item.id === room.id)?.archivedAt;
+    return { ok: storedArchived && view.archived && !view.listed, storedArchived, view };
+  });
+  await page(() => document.querySelector('#historyBtn').click());
+  const restoreFromHistory = async label => {
+    const ready = await waitForArchiveState(label + ' row', async () => {
+      const view = await roomView(room.id); return { ok: !view.settingsHidden && view.historyRow, view };
+    });
+    if (!ready) return false;
+    await page(() => {
+      const row = [...document.querySelectorAll('#archivedRoomList .skill-row')].find(el => el.textContent.includes('历史验收'));
+      [...row.querySelectorAll('button')].find(el => el.textContent.includes('恢复')).click();
+    });
+    return waitForArchiveState(label + ' restored', async () => {
+      const view = await roomView(room.id), stored = persistence.listRooms().find(item => item.id === room.id);
+      const archiveCount = persistence.listArchives(room.id).length;
+      return { ok: !!stored && !stored.archivedAt && view.exists && !view.archived && view.listed &&
+        view.currentRoomId === room.id && view.settingsHidden && archiveCount === 1 && !view.obsoleteTrashList,
+        view, storedExists: !!stored, storedArchived: !!stored?.archivedAt, archiveCount };
+    });
+  };
+  const restored = await restoreFromHistory('archived room');
+  check('通过菜单归档整个房间，历史页可以恢复', hidden && restored);
   // Legacy deleted records remain reachable through the unified archive list.
   persistence.deleteRoom(room.id);
-  await page(async () => {
-    await reloadFromMain(); document.querySelector('#historyBtn').click();
-    await new Promise((resolve) => setTimeout(resolve, 150));
-  });
-  check('旧回收记录并入归档并可连同聊天归档恢复', await page(async (roomId) => {
-    const row = [...document.querySelectorAll('#archivedRoomList .skill-row')].find((el) => el.textContent.includes('历史验收'));
-    if (!row) return false;
-    [...row.querySelectorAll('button')].find((el) => el.textContent.includes('恢复')).click();
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    return state.rooms.some((item) => item.id === roomId) && (await window.api.listArchives(roomId)).length === 1 &&
-      !document.querySelector('#trashList');
-  }, room.id));
+  await page(async () => { await reloadFromMain(); document.querySelector('#historyBtn').click(); });
+  check('旧回收记录并入归档并可连同聊天归档恢复', await restoreFromHistory('deleted room'));
 
-  check('全部房间归档后仍可访问历史并恢复', await page(async () => {
-    const ids = state.rooms.filter((room) => !room.archivedAt).map((room) => room.id);
-    for (const roomId of ids) await window.api.setRoomArchived({ roomId, archived: true });
+  const ids = await page(async () => {
+    const active = state.rooms.filter(room => !room.archivedAt).map(room => room.id);
+    for (const roomId of active) await window.api.setRoomArchived({ roomId, archived: true });
+    await reloadFromMain(); return active;
+  });
+  const empty = await page(() => !document.querySelector('#roomList .side-item') && document.querySelector('#actionBtn').disabled);
+  await page(() => document.querySelector('#historyBtn').click());
+  const listed = await waitForArchiveState('all archived rooms listed', async () => {
+    const view = await page(() => ({ count: document.querySelectorAll('#archivedRoomList .skill-row').length,
+      settingsHidden: document.querySelector('#settingsModal').hidden }));
+    const storedArchived = persistence.listRooms().filter(item => ids.includes(item.id) && item.archivedAt).length;
+    return { ok: !view.settingsHidden && view.count === ids.length && storedArchived === ids.length, view, storedArchived, expected: ids.length };
+  });
+  await page(async roomIds => {
+    for (const roomId of roomIds) await window.api.setRoomArchived({ roomId, archived: false });
     await reloadFromMain();
-    const empty = !document.querySelector('#roomList .side-item') && document.querySelector('#actionBtn').disabled;
-    document.querySelector('#historyBtn').click();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    const listed = document.querySelectorAll('#archivedRoomList .skill-row').length === ids.length;
-    for (const roomId of ids) await window.api.setRoomArchived({ roomId, archived: false });
-    await reloadFromMain();
-    return empty && listed && !document.querySelector('#actionBtn').disabled;
-  }));
+  }, ids);
+  const activeAgain = await waitForArchiveState('all rooms restored', async () => {
+    const disabled = await page(() => document.querySelector('#actionBtn').disabled);
+    const storedActive = persistence.listRooms().filter(item => ids.includes(item.id) && !item.archivedAt).length;
+    return { ok: !disabled && storedActive === ids.length, disabled, storedActive, expected: ids.length };
+  });
+  check('全部房间归档后仍可访问历史并恢复', empty && listed && activeAgain);
 
   const discovery = require('../src/main/skills/skillDiscovery');
   const successfulScan = discovery.scan;

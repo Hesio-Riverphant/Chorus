@@ -173,7 +173,7 @@ function build({ sourceRoot = path.resolve(__dirname, '..'), outputRoot = path.j
       throw new Error('Linux node-pty native module missing; run npm ci on the Linux build host with Python and a C++ toolchain');
     }
     for (const file of [...APP_ROOT_FILES, ...SOURCE_DOCS]) if (fs.existsSync(path.join(sourceRoot, file))) copyFile(sourceRoot, appRoot, file);
-    fs.writeFileSync(path.join(appRoot, 'package.json'), JSON.stringify({ name: 'agent-room', productName: 'Chorus', version: manifest.version,
+    fs.writeFileSync(path.join(appRoot, 'package.json'), JSON.stringify({ name: 'agent-room', productName: 'Chorus', desktopName: 'chorus.desktop', version: manifest.version,
       description: manifest.description, main: 'desktop-bootstrap.js', license: manifest.license || 'MIT', dependencies: manifest.dependencies || {} }, null, 2) + '\n', { flag: 'wx' });
     fs.writeFileSync(path.join(appRoot, 'desktop-bootstrap.js'), bootstrapSource(), { flag: 'wx' });
     const findings = scanFiles(appRoot, filesUnder(appRoot).filter(file => !allowedRuntimeFile(file)));
