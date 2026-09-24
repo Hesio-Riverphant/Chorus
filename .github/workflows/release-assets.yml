@@ -1,0 +1,49 @@
+name: Attach verified Linux release assets
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful desktop workflow run ID
+        required: true
+      release_tag:
+        description: Existing draft release tag
+        required: true
+permissions:
+  actions: read
+  contents: write
+jobs:
+  attach:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SOURCE_RUN: ${{ inputs.run_id }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - name: Check source run and draft identity
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_RUN" =~ ^[0-9]+$ && "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          gh api "repos/$GH_REPO/actions/runs/$SOURCE_RUN" > run.json
+          gh release view "$RELEASE_TAG" --json isDraft,targetCommitish > release.json
+          node -e "const fs=require('fs'),r=JSON.parse(fs.readFileSync('run.json')),d=JSON.parse(fs.readFileSync('release.json'));if(r.conclusion!=='success'||r.path!=='.github/workflows/desktop.yml'||!d.isDraft||d.targetCommitish!==r.head_sha)throw Error('Successful run and draft commit must match')"
+      - uses: actions/download-artifact@v4
+        with:
+          name: Chorus-Linux-x64
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          path: artifacts
+      - name: Verify hashes and attach binaries
+        run: |
+          node <<'NODE'
+          const fs=require('fs'),path=require('path'),crypto=require('crypto'),cp=require('child_process');
+          function files(dir){return fs.readdirSync(dir,{withFileTypes:true}).flatMap(e=>e.isDirectory()?files(path.join(dir,e.name)):[path.join(dir,e.name)]);}
+          const all=files('artifacts'), manifests=all.filter(f=>path.basename(f)==='ARTIFACTS.json');
+          if(manifests.length!==1)throw Error('Expected one artifact manifest');
+          const m=JSON.parse(fs.readFileSync(manifests[0]));
+          if(m.platform!=='linux'||m.arch!=='x64'||'v'+m.version!==process.env.RELEASE_TAG)throw Error('Artifact identity mismatch');
+          const binaries=m.artifacts.filter(a=>/\.(zip|deb)$/.test(a.path));
+          if(binaries.length!==2)throw Error('Expected Debian and ZIP');
+          for(const a of binaries){const matches=all.filter(f=>path.basename(f)===path.basename(a.path));if(matches.length!==1)throw Error('Ambiguous binary');const b=fs.readFileSync(matches[0]);if(b.length!==a.bytes||crypto.createHash('sha256').update(b).digest('hex')!==a.sha256)throw Error('Artifact checksum mismatch');cp.execFileSync('gh',['release','upload',process.env.RELEASE_TAG,matches[0]],{stdio:'inherit'});}
+          NODE
