@@ -1,0 +1,21 @@
+/* Agent settings follow the selected UI font size and theme. */
+.cli-profile-list { display: flex; flex-direction: column; gap: .6rem; margin-bottom: .85rem; }
+.cli-scan-toolbar { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-bottom: .4rem; }
+.cli-scan-toolbar .hint { margin: 0; }
+.cli-profile-row { display: flex; align-items: center; gap: .75rem; border: 1px solid var(--border); border-radius: .65rem; padding: .85rem; }
+.cli-profile-row > input { flex: 0 0 auto; }
+.cli-profile-detail { flex: 1 1 12rem; min-width: 0; display: flex; flex-direction: column; gap: .25rem; }
+.cli-profile-path { color: var(--text-2); font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cli-profile-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .4rem; }
+.cli-profile-actions .ghost-btn { padding: .35rem .65rem; }
+.cli-test-result { overflow-wrap: anywhere; }
+.cli-profile-editor { margin: 1rem 0; padding-top: .85rem; border-top: 1px solid var(--border); }
+.cli-profile-editor h3 { margin: 0 0 1rem; font-size: 1rem; }
+.cli-profile-editor .field > label { display: block; color: var(--text-2); font-size: .93rem; margin-bottom: .4rem; }
+.cli-profile-editor .row-inline { align-items: center; }
+.cli-profile-editor .row-inline input { min-width: 0; }
+.cli-profile-editor .row-inline button { flex: 0 0 auto; }
+.cli-profile-editor .hint { margin: -.3rem 0 .85rem; }
+.cli-profile-editor [aria-invalid="true"] { border-color: var(--danger); }
+#cliProfileError { margin-top: .85rem; }
+@media (max-width: 650px) { .cli-profile-row { flex-wrap: wrap; } .cli-profile-actions { margin-left: auto; } }

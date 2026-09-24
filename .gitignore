@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+handoffs/
+
+# Build output
+dist/
+out/
+target/
+
+# Local runtime data & logs (never commit user data)
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
+workspace/*
+!workspace/.gitkeep
+
+# Local CLI / session artifacts
+.claude/
+.codex/
+.kimi/
+.kimi-code/
+.agents/
+.gemini/
+.qwen/
+.copilot/
+.cursor/
+.factory/
+.zcode/
+.trae/
+.codebuddy/
+
+# Secrets / env
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Editors
+.vscode/
+.idea/

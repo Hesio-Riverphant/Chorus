@@ -1,0 +1,41 @@
+.native-capability { display: flex; gap: .8rem; align-items: center; justify-content: space-between; padding: .75rem .25rem; border-bottom: 1px solid var(--border); }
+.native-capability input { flex: 0 0 auto; width: 2.1rem; height: 1.15rem; accent-color: var(--accent, #3569cc); cursor: pointer; }
+.native-capability input:disabled { cursor: default; }
+.native-capability small { display: block; color: var(--muted); margin-top: .2rem; }
+.native-capability span { min-width: 0; overflow-wrap: anywhere; }
+#nativeCapabilityList { max-height: 18rem; overflow: auto; }
+.native-capability-group h4 { font-size: .86rem; color: var(--muted); margin: 1.1rem 0 .2rem; font-weight: 600; }
+.native-agent-tabs { display: flex; flex-wrap: wrap; gap: .4rem; margin: .9rem 0 1.2rem; }
+.native-agent-tab { border: 1px solid var(--border); border-radius: .65rem; padding: .55rem .85rem; background: transparent; color: inherit; cursor: pointer; transition: background 140ms ease, border-color 140ms ease; }
+.native-agent-tab.active { background: color-mix(in srgb, var(--accent, #3569cc) 12%, transparent); border-color: color-mix(in srgb, var(--accent, #3569cc) 40%, var(--border)); color: var(--accent, #3569cc); }
+.native-management-toolbar,.native-save-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.native-management-toolbar label { flex: 1; display: flex; align-items: center; gap: .7rem; }
+.native-management-toolbar select { min-width: 10rem; max-width: 22rem; flex: 1; }
+.native-management-toolbar button { white-space: nowrap; }
+.native-workspace { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.native-choice-label { display: flex; gap: .7rem; align-items: center; font-size: .92rem; }
+.native-choice-label select { flex: 1; max-width: 22rem; }
+.native-management-toolbar select, .native-choice-label select { color: var(--text); background-color: var(--raised); border: 1px solid var(--border); border-radius: 8px; padding: 8px 30px 8px 10px; min-height: 36px; }
+.native-capability input[role="switch"] { appearance: none; border: 1px solid var(--border); border-radius: 999px; background: var(--raised); position: relative; width: 34px; height: 20px; }
+.native-capability input[role="switch"]::before { content: ''; position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; background: var(--text-2); }
+.native-capability input[role="switch"]:checked { background: var(--accent-fill); border-color: var(--accent-fill); }
+.native-capability input[role="switch"]:checked::before { left: 17px; background: var(--accent-on); }
+.native-capability input[role="switch"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.native-capability input[role="switch"]:disabled { opacity: .45; }
+.message-mode { margin-left: 8px; padding: 2px 6px; border-radius: 4px; color: var(--accent); background: var(--accent-soft); font-size: .75rem; }
+.native-status { min-height: 1.4em; margin-bottom: .25rem; }
+.native-save-row { position: sticky; bottom: 0; padding: 1rem 0 .35rem; background: var(--panel, var(--bg)); }
+.native-save-row button { flex-shrink: 0; }
+.native-scope { margin-top: 1rem; }
+.native-empty { color: var(--muted); padding: 1.4rem 0; }
+@media (prefers-reduced-motion: reduce) { .native-agent-tab { transition: none; } }
+.context-table { width: 100%; border-collapse: collapse; font-size: .928571rem; }
+.context-table td,.context-table th { text-align: left; padding: .6rem; border-bottom: 1px solid var(--border); }
+.native-question { padding: 1rem; border: 1px solid var(--border); border-radius: .7rem; margin: .8rem 0; }
+.native-question input { width: 100%; }
+
+.native-member-picker { flex: 1; min-width: 0; display: grid; gap: .55rem; }
+.native-member-picker label { min-width: 0; }
+.native-member-picker input { flex: 1; min-width: 0; max-width: 22rem; background: var(--raised); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.native-member-picker select { min-width: 0; width: 100%; }
+.native-selected-member { overflow-wrap: anywhere; }

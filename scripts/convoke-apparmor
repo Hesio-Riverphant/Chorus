@@ -1,0 +1,7 @@
+abi <abi/4.0>,
+include <tunables/global>
+
+profile "chorus" "/opt/Chorus/chorus" flags=(unconfined) {
+  userns,
+  include if exists <local/chorus>
+}

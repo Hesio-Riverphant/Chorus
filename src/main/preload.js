@@ -1,0 +1,76 @@
+'use strict';
+
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('api', {
+  workbench: (payload) => ipcRenderer.invoke('workbench:request', payload),
+  onWorkbench: (cb) => {
+    const listener = (_event, data) => cb(data);
+    ipcRenderer.on('workbench:event', listener);
+    return () => ipcRenderer.removeListener('workbench:event', listener);
+  },
+  projectRooms: (payload) => ipcRenderer.invoke('project:rooms', payload),
+  saveNavigation: (patch) => ipcRenderer.invoke('navigation:save', patch),
+  getInitial: () => ipcRenderer.invoke('app:getInitial'),
+  saveRoomMember: (roomId, bot) => ipcRenderer.invoke('room:saveMember', { roomId, bot }),
+  saveBot: (bot) => ipcRenderer.invoke('bot:save', bot),
+  listCliProfiles: () => ipcRenderer.invoke('cli:list'),
+  discoverClis: () => ipcRenderer.invoke('cli:discover'),
+  discoverNativeCapabilities: (payload) => ipcRenderer.invoke('native:discover', payload),
+  getContextUsage: (roomId) => ipcRenderer.invoke('room:context', roomId),
+  respondNativeInput: (payload) => ipcRenderer.invoke('chat:respondInput', payload),
+  listModels: (cliType, refresh = false) => ipcRenderer.invoke('bot:models', { cliType, refresh }),
+  hideModelCandidate: (payload) => ipcRenderer.invoke('bot:hideModelCandidate', payload),
+  deleteBot: (botId) => ipcRenderer.invoke('bot:delete', botId),
+  testBotConnection: (payload) => ipcRenderer.invoke('bot:testConnection', payload),
+  cancelBotConnectionTest: (payload) => ipcRenderer.invoke('bot:cancelConnectionTest', payload),
+  pickAvatar: () => ipcRenderer.invoke('dialog:pickAvatar'),
+  saveRoom: (room) => ipcRenderer.invoke('room:save', room),
+  setRoomPinned: (payload) => ipcRenderer.invoke('room:pin', payload),
+  renameRoom: (payload) => ipcRenderer.invoke('room:rename', payload),
+  createSideChat: (payload) => ipcRenderer.invoke('room:sideChat', payload),
+  deleteRoom: (roomId) => ipcRenderer.invoke('room:delete', roomId),
+  setMemberDisplayOrder: (payload) => ipcRenderer.invoke('room:displayOrder', payload),
+  rewindRoom: (payload) => ipcRenderer.invoke('room:rewind', payload),
+  forkRoomAt: (payload) => ipcRenderer.invoke('room:fork', payload),
+  addAnnotation: (payload) => ipcRenderer.invoke('message:annotate', payload),
+  removeAnnotation: (payload) => ipcRenderer.invoke('message:removeAnnotation', payload),
+  continueHuman: (payload) => ipcRenderer.invoke('chat:continue', payload),
+  setRoomArchived: (payload) => ipcRenderer.invoke('room:archive', payload),
+  listTrash: () => ipcRenderer.invoke('trash:list'),
+  restoreTrash: (key) => ipcRenderer.invoke('trash:restore', key),
+  purgeTrash: (key) => ipcRenderer.invoke('trash:purge', key),
+  pickFolder: (current) => ipcRenderer.invoke('dialog:pickFolder', current),
+  openDataDir: () => ipcRenderer.invoke('shell:openDataDir'),
+  openRoomDirectory: (roomId) => ipcRenderer.invoke('shell:openRoomDirectory', roomId),
+  openSkillsDir: () => ipcRenderer.invoke('shell:openSkillsDir'),
+  sendHuman: (payload) => ipcRenderer.invoke('chat:human', payload),
+  stopRun: (roomId) => ipcRenderer.invoke('chat:stop', roomId),
+  retryMessage: (payload) => ipcRenderer.invoke('chat:retry', payload),
+  respondPermission: (payload) => ipcRenderer.invoke('permission:respond', payload),
+  saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
+  discoverSkills: (payload) => ipcRenderer.invoke('skills:discover', payload),
+  discoverSkillsDetailed: (payload) => ipcRenderer.invoke('skills:discoverDetailed', payload),
+  listImportedSkills: () => ipcRenderer.invoke('skills:imported'),
+  listSkillCopies: () => ipcRenderer.invoke('skills:copies'),
+  listSkillReferences: () => ipcRenderer.invoke('skills:references'),
+  registerSkillReference: (payload) => ipcRenderer.invoke('skills:referenceRegister', payload),
+  removeSkillReference: (id) => ipcRenderer.invoke('skills:referenceRemove', id),
+  importSkill: (payload) => ipcRenderer.invoke('skills:import', payload),
+  removeSkill: (name) => ipcRenderer.invoke('skills:remove', name),
+  cancelArchiveSearch: () => ipcRenderer.invoke('archive:cancelSearch'),
+  searchArchives: (query) => ipcRenderer.invoke('archive:search', query),
+  listArchives: (roomId) => ipcRenderer.invoke('archive:list', roomId),
+  archiveCurrent: (roomId) => ipcRenderer.invoke('archive:create', roomId),
+  getArchive: (payload) => ipcRenderer.invoke('archive:get', payload),
+  restoreArchive: (payload) => ipcRenderer.invoke('archive:restore', payload),
+  deleteArchive: (payload) => ipcRenderer.invoke('archive:delete', payload),
+  deleteMessage: (payload) => ipcRenderer.invoke('message:delete', payload),
+  clearRoom: (roomId) => ipcRenderer.invoke('room:clear', roomId),
+  exportRoom: (roomId) => ipcRenderer.invoke('room:export', roomId),
+  onRoomEvent: (cb) => {
+    const listener = (_event, data) => cb(data);
+    ipcRenderer.on('room:event', listener);
+    return () => ipcRenderer.removeListener('room:event', listener);
+  },
+});

@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'" />
+  <title>Chorus</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="cli-settings.css" />
+  <link rel="stylesheet" href="side-chat.css" />
+  <link rel="stylesheet" href="navigation.css" />
+  <link rel="stylesheet" href="native-capabilities.css" />
+  <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css" />
+  <link rel="stylesheet" href="workbench.css" />
+  <link rel="stylesheet" href="conversation.css" />
+  <link rel="stylesheet" href="polish.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Sidebar -->
+    <aside id="sidebar">
+      <div class="side-head">
+        <span class="brand"><img src="assets/convoke.png" alt="" width="32" height="32" />Chorus</span>
+      </div>
+
+      <div class="side-section">
+        <div class="side-title">
+          <span data-i18n="房间">房间</span>
+          <button class="icon-btn" id="addRoom" title="新建房间" data-i18n-attrs="{&quot;title&quot;: &quot;新建房间&quot;}">＋</button>
+        </div>
+        <div id="roomList"></div>
+      </div>
+
+      <div class="side-section">
+        <div class="side-title">
+          <span id="botSectionTitle" data-i18n="当前房间成员">当前房间成员</span>
+          <button class="icon-btn" id="addBot" title="向当前房间添加成员" data-i18n-attrs="{&quot;title&quot;: &quot;向当前房间添加成员&quot;}">＋</button>
+        </div>
+        <div id="botList"></div>
+      </div>
+
+      <div class="side-foot">
+        <button class="text-btn" id="historyBtn" data-i18n="◷ 历史与归档">◷ 历史与归档</button>
+        <button class="text-btn" id="settingsBtn" data-i18n="⚙ 设置">⚙ 设置</button>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main id="main">
+      <header id="topbar">
+        <div class="room-heading"><div class="room-title" id="roomName" data-i18n="房间">房间</div>
+          <button class="workspace-chip" id="roomWorkspace" type="button" title="打开工作目录" data-i18n-attrs="{&quot;title&quot;: &quot;打开工作目录&quot;}" data-i18n="工作目录">工作目录</button>
+        </div>
+        <div class="member-summary" id="memberSummary"></div>
+      </header>
+
+      <div id="messages"></div>
+
+      <!-- Composer -->
+      <div id="composer">
+        <div class="run-status" id="runStatus" hidden></div>
+        <div class="composer-mode-bar" id="composerMode" aria-live="polite" hidden></div>
+
+        <div class="composer-toolbar">
+          <button class="tool-chip" id="allBtn" title="呼叫全体成员" data-i18n-attrs="{&quot;title&quot;: &quot;呼叫全体成员&quot;}" data-i18n="@全体">@全体</button>
+          <div class="seg" id="routeSeg" title="无 @ 时谁收到消息" data-i18n-attrs="{&quot;title&quot;: &quot;无 @ 时谁收到消息&quot;}">
+            <button data-route="moderator" class="seg-btn" data-i18n="仅主持人">仅主持人</button>
+            <button data-route="all" class="seg-btn" data-i18n="全体">全体</button>
+          </div>
+          <select id="speakMode" title="发言方式" data-i18n-attrs="{&quot;title&quot;: &quot;发言方式&quot;}">
+            <option value="parallel" data-i18n="自由并行">自由并行</option>
+            <option value="sequential" data-i18n="顺序发言">顺序发言</option>
+            <option value="host" data-i18n="主持人点名">主持人点名</option>
+          </select>
+        </div>
+
+        <div class="composer-row">
+          <div class="input-wrap">
+            <div id="mentionBox" class="mention-box" hidden></div>
+            <div id="slashBox" class="mention-box" hidden></div>
+            <div id="input" contenteditable="true" role="textbox" aria-multiline="true"
+              aria-label="消息输入" data-placeholder="输入消息；@ 唤出成员，/ 选择技能" data-i18n-attrs="{&quot;aria-label&quot;: &quot;消息输入&quot;, &quot;data-placeholder&quot;: &quot;输入消息；@ 唤出成员，/ 选择技能&quot;}"></div>
+          </div>
+          <button id="actionBtn" class="send-btn" data-i18n="发送">发送</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Room modal -->
+  <div class="modal-backdrop" id="roomModal" hidden>
+    <div class="modal">
+      <div class="modal-title" id="roomModalTitle" data-i18n="新建房间">新建房间</div>
+      <label class="field">
+        <span data-i18n="房间名">房间名</span>
+        <input type="text" id="r_name" />
+      </label>
+      <div class="form-error" id="r_error" hidden></div>
+      <label class="field">
+        <span data-i18n="项目工作目录（留空 = 应用根目录）">项目工作目录（留空 = 应用根目录）</span>
+        <div class="row-inline">
+          <input type="text" id="r_cwd" placeholder="留空 = 应用根目录"  data-i18n-attrs="{&quot;placeholder&quot;: &quot;留空 = 应用根目录&quot;}"/>
+          <button class="ghost-btn" id="r_cwdBrowse" type="button" data-i18n="浏览…">浏览…</button>
+        </div>
+      </label>
+      <div class="field">
+        <span data-i18n="房间成员（勾选进入本房间；成员各房间独立；主持人单选）">房间成员（勾选进入本房间；成员各房间独立；主持人单选）</span>
+        <div id="r_members" class="member-pick"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="danger-btn" id="roomDeleteBtn" type="button" data-i18n="删除房间">删除房间</button>
+        <div class="spacer"></div>
+        <button class="ghost-btn" data-close="roomModal" type="button" data-i18n="取消">取消</button>
+        <button class="primary-btn" id="roomSaveBtn" type="button" data-i18n="保存">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add member modal -->
+  <div class="modal-backdrop" id="addMemberModal" hidden>
+    <div class="modal">
+      <div class="modal-title">添加成员到「<span id="am_roomName"></span>」</div>
+      <p class="hint" data-i18n="勾选已有 Agent 配置加入本房间；也可以新建一个配置（保存后自动加入本房）。">勾选已有 Agent 配置加入本房间；也可以新建一个配置（保存后自动加入本房）。</p>
+      <div id="am_list" class="member-pick"></div>
+      <div class="form-error" id="am_error" hidden></div>
+      <div class="modal-actions">
+        <button class="ghost-btn" id="am_new" type="button" data-i18n="＋ 新建成员配置">＋ 新建成员配置</button>
+        <div class="spacer"></div>
+        <button class="ghost-btn" data-close="addMemberModal" type="button" data-i18n="取消">取消</button>
+        <button class="primary-btn" id="am_add" type="button" data-i18n="添加">添加</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Generic floating context menu -->
+  <div id="popMenu" class="pop-menu" hidden></div>
+
+  <!-- Bot modal -->
+  <div class="modal-backdrop" id="botModal" hidden>
+    <div class="modal">
+      <div class="modal-title" id="botModalTitle" data-i18n="新建 bot">新建 bot</div>
+
+      <div class="field-grid">
+        <label class="field">
+          <span data-i18n="名称">名称</span>
+          <input type="text" id="f_name" />
+        </label>
+        <label class="field">
+          <span data-i18n="角色">角色</span>
+          <select id="f_rolePreset"></select>
+          <input type="text" id="f_role" placeholder="自定义角色" hidden  data-i18n-attrs="{&quot;placeholder&quot;: &quot;自定义角色&quot;}"/>
+        </label>
+      </div>
+      <div class="form-error" id="f_error" hidden></div>
+
+      <div class="field">
+        <span data-i18n="头像">头像</span>
+        <div class="row-inline avatar-controls">
+          <span id="f_avatarPreview"></span>
+          <select id="f_avatarType" aria-label="头像类型" data-i18n-attrs="{&quot;aria-label&quot;: &quot;头像类型&quot;}">
+            <option value="default" data-i18n="跟随 CLI">跟随 CLI</option><option value="claude">Claude</option>
+            <option value="codex">OpenAI / Codex</option><option value="kimi">Kimi</option>
+            <option value="text" data-i18n="自定义文字">自定义文字</option><option value="image" data-i18n="自定义图片">自定义图片</option>
+          </select>
+          <input type="text" id="f_avatarText" maxlength="4" placeholder="文字" aria-label="头像文字" hidden  data-i18n-attrs="{&quot;placeholder&quot;: &quot;文字&quot;, &quot;aria-label&quot;: &quot;头像文字&quot;}"/>
+          <button type="button" id="f_avatarPick" class="ghost-btn" hidden data-i18n="选择图片…">选择图片…</button>
+        </div>
+      </div>
+
+      <div class="field-grid">
+        <label class="field">
+          <span>CLI</span>
+          <select id="f_cliType">
+            <option value="claude">Claude Code</option>
+            <option value="codex">Codex CLI</option>
+            <option value="kimi">Kimi Code</option>
+          </select>
+          <span class="hint" id="f_cliNotice"></span>
+        </label>
+        <label class="field">
+          <span data-i18n="调用模型">调用模型</span>
+          <div class="row-inline">
+            <select id="f_modelSelect" aria-label="调用模型" data-i18n-attrs="{&quot;aria-label&quot;: &quot;调用模型&quot;}"><option value="" data-i18n="CLI 默认">CLI 默认</option><option value="__custom__" data-i18n="自定义模型…">自定义模型…</option></select>
+            <button class="ghost-btn" id="f_modelRefresh" type="button" title="刷新模型候选" data-i18n-attrs="{&quot;title&quot;: &quot;刷新模型候选&quot;}" data-i18n="刷新">刷新</button>
+          </div>
+          <input type="text" id="f_model" placeholder="填写模型标识，例如 provider/model-name" aria-label="自定义模型标识" hidden  data-i18n-attrs="{&quot;placeholder&quot;: &quot;填写模型标识，例如 provider/model-name&quot;, &quot;aria-label&quot;: &quot;自定义模型标识&quot;}"/>
+          <small class="hint" id="f_modelHelp" hidden></small>
+          <small class="hint" id="f_modelNotice" role="status"></small>
+        </label>
+      </div>
+
+      <div class="field-grid">
+        <label class="field"><span data-i18n="推理程度">推理程度</span><select id="f_reasoningEffort"><option value="" data-i18n="默认">默认</option></select><small id="f_reasoningNotice" class="hint"></small></label>
+        <input id="f_executionMode" type="hidden" value="chat" />
+      </div>
+      <label class="field">
+        <span id="f_personaLabel" data-i18n="人设（留空采用角色预设）">人设（留空采用角色预设）</span>
+        <textarea id="f_persona" rows="3"></textarea>
+      </label>
+
+      <div class="field"><button id="botTestBtn" class="ghost-btn" type="button" data-i18n="测试连接">测试连接</button>
+        <button id="botTestCancel" class="ghost-btn" type="button" hidden data-i18n="取消测试">取消测试</button>
+        <span id="botTestResult" class="hint" role="status"></span></div>
+
+      <section class="bot-advanced"><h3 data-i18n="工作目录与访问权限">工作目录与访问权限</h3>
+      <label class="field">
+        <span data-i18n="工作目录（留空 = 房间工作目录）">工作目录（留空 = 房间工作目录）</span>
+        <div class="row-inline">
+          <input type="text" id="f_cwd" placeholder="留空 = 房间工作目录"  data-i18n-attrs="{&quot;placeholder&quot;: &quot;留空 = 房间工作目录&quot;}"/>
+          <button class="ghost-btn" id="f_cwdBrowse" type="button" data-i18n="浏览…">浏览…</button>
+        </div>
+      </label>
+
+      <p id="botEffectiveCwd" class="hint" role="status"></p>
+      <div class="field">
+        <span data-i18n="访问权限">访问权限</span>
+        <p class="hint" id="nativePermissionNotice" hidden data-i18n="由此 CLI 的启动参数与原生配置控制权限。">由此 CLI 的启动参数与原生配置控制权限。</p>
+        <div class="perm-group" id="f_perm">
+          <label class="perm-opt">
+            <input type="radio" name="f_permRadio" value="read_only" />
+            <div>
+              <b data-i18n="只读">只读</b>
+              <small data-i18n="向 CLI 请求只读权限">向 CLI 请求只读权限</small>
+            </div>
+          </label>
+          <label class="perm-opt">
+            <input type="radio" name="f_permRadio" value="workspace" />
+            <div>
+              <b data-i18n="工作区可写">工作区可写</b>
+              <small data-i18n="向 CLI 请求工作区写入权限">向 CLI 请求工作区写入权限</small>
+            </div>
+          </label>
+          <label class="perm-opt">
+            <input type="radio" name="f_permRadio" value="full" />
+            <div>
+              <b data-i18n="全权自动">全权自动</b>
+              <small data-i18n="自动批准所有操作，慎用">自动批准所有操作，慎用</small>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <p class="hint" data-i18n="实际权限由所选 CLI 执行，模式名称不代表系统沙箱保证。">实际权限由所选 CLI 执行，模式名称不代表系统沙箱保证。</p></section>
+
+      <div class="check-row">
+        <label><input type="checkbox" id="f_enabled" /> <span data-i18n="启用">启用</span></label>
+        <label><input type="checkbox" id="f_moderator" /> <span data-i18n="设为主持人">设为主持人</span></label>
+      </div>
+
+      <div class="modal-actions">
+        <button class="danger-btn" id="botDeleteBtn" type="button" data-i18n="删除">删除</button>
+        <div class="spacer"></div>
+        <button class="ghost-btn" data-close="botModal" type="button" data-i18n="取消">取消</button>
+        <button class="primary-btn" id="botSaveBtn" type="button" data-i18n="保存">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings modal -->
+  <div class="modal-backdrop" id="settingsModal" hidden>
+    <div class="modal settings-modal">
+      <div class="settings-layout">
+        <nav class="settings-nav">
+          <button class="settings-tab active" data-tab="general" data-i18n="通用">通用</button>
+          <button class="settings-tab" data-tab="bots" data-i18n="成员管理">成员管理</button>
+          <button class="settings-tab" data-tab="cli" data-i18n="Agent 接入">Agent 接入</button>
+          <button class="settings-tab" data-tab="appearance" data-i18n="外观">外观</button>
+          <button class="settings-tab" data-tab="guard" data-i18n="接力控制">接力控制</button>
+          <button class="settings-tab" data-tab="pricing" data-i18n="计价">计价</button>
+          <button class="settings-tab" data-tab="skills" data-i18n="技能">技能</button>
+          <button class="settings-tab" data-tab="extensions" data-i18n="MCP 与插件">MCP 与插件</button>
+          <button class="settings-tab" data-tab="history" data-i18n="历史与归档">历史与归档</button>
+          <button class="settings-tab" data-tab="data" data-i18n="数据">数据</button>
+          <button class="settings-tab" data-tab="about" data-i18n="关于">关于</button>
+        </nav>
+
+        <div class="settings-body">
+<section id="settings-extensions" class="settings-panel" data-panel="extensions" hidden>
+  <div class="settings-section-heading"><h3 data-i18n="MCP 与插件">MCP 与插件</h3></div>
+  <div id="nativeSettingsHost"></div>
+</section>
+<section id="settings-bots" class="settings-panel" data-panel="bots" hidden>
+  <h3 data-i18n="成员管理">成员管理</h3><p class="hint" data-i18n="全局成员配置供普通房间使用。侧聊保存独立配置，只能在侧聊内编辑；删除保留历史消息。">全局成员配置供普通房间使用。侧聊保存独立配置，只能在侧聊内编辑；删除保留历史消息。</p>
+  <div class="settings-section-heading"><input id="botManagementSearch" type="search" placeholder="搜索成员或房间" aria-label="搜索成员或房间"  data-i18n-attrs="{&quot;placeholder&quot;: &quot;搜索成员或房间&quot;, &quot;aria-label&quot;: &quot;搜索成员或房间&quot;}"/><button id="botManagementNew" class="ghost-btn" type="button" data-i18n="新建成员">新建成员</button></div>
+  <div id="botManagementList" class="skill-list"></div>
+</section>
+<section id="settings-cli" class="settings-panel" data-panel="cli" hidden>
+  <p class="hint" data-i18n="扫描本机 Agent，选择需要接入的项目。保存后可在成员设置中使用。">扫描本机 Agent，选择需要接入的项目。保存后可在成员设置中使用。</p>
+  <div id="cliProfileList" class="cli-profile-list"></div>
+  <button id="cliProfileAdd" type="button" class="ghost-btn" data-i18n="新增 CLI 接入">新增 CLI 接入</button>
+  <p class="hint" data-i18n="此处修改将在设置页点击“保存”后生效。移除接入前，请先调整使用它的成员。">此处修改将在设置页点击“保存”后生效。移除接入前，请先调整使用它的成员。</p>
+  <p class="hint" data-i18n="支持临时会话的 Agent 会优先使用临时会话；其他 Agent 按自身设置保存记录。">支持临时会话的 Agent 会优先使用临时会话；其他 Agent 按自身设置保存记录。</p>
+  <div id="cliProfileEditor" class="cli-profile-editor" hidden>
+    <h3 id="cliProfileEditorTitle" data-i18n="新增 CLI 接入">新增 CLI 接入</h3>
+    <label class="field"><span data-i18n="名称">名称</span><input id="cliProfileLabel" type="text" maxlength="80" placeholder="例如 OpenCode、Pi、Hermes" data-i18n-attrs="{&quot;placeholder&quot;: &quot;例如 OpenCode、Pi、Hermes&quot;}"></label>
+    <div class="field"><label for="cliProfileCommand" data-i18n="程序完整路径">程序完整路径</label>
+      <div class="row-inline"><input id="cliProfileCommand" type="text" spellcheck="false" placeholder="例如 C:\Tools\opencode.exe" data-i18n-attrs="{&quot;placeholder&quot;: &quot;例如 C:\\Tools\\opencode.exe&quot;}"><button id="cliProfileBrowse" type="button" class="ghost-btn" hidden data-i18n="选择程序">选择程序</button></div>
+      <p class="hint" data-i18n="选择 .exe 或 .cmd 文件。先在该 CLI 中完成登录；这里不填写密钥或令牌。">选择 .exe 或 .cmd 文件。先在该 CLI 中完成登录；这里不填写密钥或令牌。</p>
+    </div>
+    <label class="field"><span data-i18n="启动参数 · 每行一个">启动参数 · 每行一个</span><textarea id="cliProfileArgs" rows="5" spellcheck="false" placeholder="参数按 CLI 文档填写；例如&#10;--model&#10;{model}" data-i18n-attrs="{&quot;placeholder&quot;: &quot;参数按 CLI 文档填写；例如\n--model\n{model}&quot;}"></textarea></label>
+    <p class="hint" data-i18n="{model} 使用成员设置中的模型名称；{prompt} 使用本轮消息。空行忽略，空格按原样保留；每行无需外层引号。">{model} 使用成员设置中的模型名称；{prompt} 使用本轮消息。空行忽略，空格按原样保留；每行无需外层引号。</p>
+    <label class="field"><span data-i18n="消息传入方式">消息传入方式</span><select id="cliProfilePromptMode"><option value="stdin" data-i18n="标准输入（stdin）">标准输入（stdin）</option><option value="arg" data-i18n="命令行参数（{prompt}）">命令行参数（{prompt}）</option></select></label>
+    <p id="cliProfilePromptHelp" class="hint"></p>
+    <details id="cliProfileAdvanced" class="bot-advanced"><summary data-i18n="输出与历史选项">输出与历史选项</summary>
+      <label class="field"><span data-i18n="输出格式">输出格式</span><select id="cliProfileOutputMode"><option value="text" data-i18n="纯文本">纯文本</option><option value="jsonl" data-i18n="统一 JSONL 事件">统一 JSONL 事件</option></select></label>
+      <p id="cliProfileJsonlHelp" class="hint" hidden data-i18n="仅用于明确输出本应用约定事件的程序：每行一个 JSON，type 为 text、done 或 error。各 CLI 自带的 JSON 输出不一定兼容。">仅用于明确输出本应用约定事件的程序：每行一个 JSON，type 为 text、done 或 error。各 CLI 自带的 JSON 输出不一定兼容。</p>
+      <label class="field"><span data-i18n="附加启动参数 · 可选，每行一个">附加启动参数 · 可选，每行一个</span><textarea id="cliProfileHistoryArgs" rows="3" spellcheck="false"></textarea></label>
+      <p class="hint" data-i18n="仅填写该 CLI 文档支持的启动选项。实际记录保存方式由对应 CLI 决定。">仅填写该 CLI 文档支持的启动选项。实际记录保存方式由对应 CLI 决定。</p>
+    </details>
+    <div class="btn-row"><button id="cliProfileApply" type="button" class="primary-btn" data-i18n="加入待保存列表">加入待保存列表</button><button id="cliProfileCancel" type="button" class="ghost-btn" data-i18n="取消本项编辑">取消本项编辑</button></div>
+  </div>
+  <p id="cliProfileError" class="form-error" role="alert" hidden></p>
+</section>
+
+<section id="settings-appearance" class="settings-panel" data-panel="appearance" hidden>
+  <label class="field"><span><input id="s_autoCollapseProcess" type="checkbox"> <span data-i18n="输出结论后自动收起过程输出">输出结论后自动收起过程输出</span></span><small class="hint" data-i18n="执行时始终展示过程；思考、工具与命令详情分别独立展开。">执行时始终展示过程；思考、工具与命令详情分别独立展开。</small></label>
+  <div class="field-grid">
+    <label class="field"><span data-i18n="显示模式">显示模式</span>
+      <select id="appearanceMode">
+        <option value="light" data-i18n="浅色">浅色</option><option value="dark" data-i18n="深色">深色</option><option value="system" data-i18n="跟随系统">跟随系统</option>
+      </select>
+    </label>
+    <label class="field"><span data-i18n="界面字号">界面字号</span>
+      <input id="appearanceFontSize" type="number" min="8" max="24" step="1" list="fontSizePresets" aria-label="界面字号"  data-i18n-attrs="{&quot;aria-label&quot;: &quot;界面字号&quot;}"/>
+      <datalist id="fontSizePresets"><option value="8"><option value="9"><option value="10"><option value="11"><option value="12"><option value="14"><option value="16"><option value="18"><option value="20"><option value="24"></datalist>
+      <small class="hint" data-i18n="8–24 px，默认 14 px">8–24 px，默认 14 px</small>
+    </label>
+  </div>
+  <div class="field"><span data-i18n="配色预设">配色预设</span>
+    <select id="appearancePreset" aria-label="配色预设" hidden data-i18n-attrs="{&quot;aria-label&quot;: &quot;配色预设&quot;}">
+      <option value="graphite" data-i18n="浅灰">浅灰</option><option value="mist" data-i18n="雾蓝">雾蓝</option><option value="sage" data-i18n="鼠尾草">鼠尾草</option><option value="sand" data-i18n="暖沙">暖沙</option>
+    </select>
+    <div id="appearancePresets" class="appearance-presets" role="group" aria-label="配色预设" data-i18n-attrs="{&quot;aria-label&quot;: &quot;配色预设&quot;}"></div>
+  </div>
+  <p class="hint" data-i18n="点击色块或打开调色板。调整即时预览，保存后保留；选择配色预设会重置各项颜色。">点击色块或打开调色板。调整即时预览，保存后保留；选择配色预设会重置各项颜色。</p>
+  <div class="field appearance-color-field"><span id="appearanceBackgroundLabel" data-i18n="阅读区颜色">阅读区颜色</span>
+    <div class="appearance-color-options">
+      <div id="appearanceBackgroundSwatches" class="appearance-color-swatches" role="group" aria-labelledby="appearanceBackgroundLabel"></div>
+      <label class="appearance-picker"><input id="appearanceBackgroundColor" type="color" aria-label="选择阅读区颜色" data-i18n-attrs="{&quot;aria-label&quot;: &quot;选择阅读区颜色&quot;}"><span data-i18n="调色板">调色板</span></label>
+      <button id="appearanceBackgroundReset" type="button" class="appearance-color-reset" data-i18n="自动">自动</button>
+    </div>
+    <details class="appearance-hex"><summary data-i18n="色号">色号</summary><input id="appearanceBackground" type="text" spellcheck="false" maxlength="7" placeholder="自动，例如 #f7f7f8" aria-label="阅读区颜色十六进制颜色" data-i18n-attrs="{&quot;placeholder&quot;: &quot;自动，例如 #f7f7f8&quot;, &quot;aria-label&quot;: &quot;阅读区颜色十六进制颜色&quot;}"></details>
+  </div>
+  <div class="field appearance-color-field"><span id="appearanceSidebarLabel" data-i18n="侧栏颜色">侧栏颜色</span>
+    <div class="appearance-color-options">
+      <div id="appearanceSidebarSwatches" class="appearance-color-swatches" role="group" aria-labelledby="appearanceSidebarLabel"></div>
+      <label class="appearance-picker"><input id="appearanceSidebarColor" type="color" aria-label="选择侧栏颜色" data-i18n-attrs="{&quot;aria-label&quot;: &quot;选择侧栏颜色&quot;}"><span data-i18n="调色板">调色板</span></label>
+      <button id="appearanceSidebarReset" type="button" class="appearance-color-reset" data-i18n="自动">自动</button>
+    </div>
+    <details class="appearance-hex"><summary data-i18n="色号">色号</summary><input id="appearanceSidebar" type="text" spellcheck="false" maxlength="7" placeholder="自动，例如 #f1f2f3" aria-label="侧栏颜色十六进制颜色" data-i18n-attrs="{&quot;placeholder&quot;: &quot;自动，例如 #f1f2f3&quot;, &quot;aria-label&quot;: &quot;侧栏颜色十六进制颜色&quot;}"></details>
+  </div>
+  <div class="field appearance-color-field"><span id="appearanceAccentLabel" data-i18n="强调色">强调色</span>
+    <div class="appearance-color-options">
+      <div id="appearanceAccentSwatches" class="appearance-color-swatches" role="group" aria-labelledby="appearanceAccentLabel"></div>
+      <label class="appearance-picker"><input id="appearanceAccentColor" type="color" aria-label="选择强调色" data-i18n-attrs="{&quot;aria-label&quot;: &quot;选择强调色&quot;}"><span data-i18n="调色板">调色板</span></label>
+      <button id="appearanceAccentReset" type="button" class="appearance-color-reset" data-i18n="自动">自动</button>
+    </div>
+    <details class="appearance-hex"><summary data-i18n="色号">色号</summary><input id="appearanceAccent" type="text" spellcheck="false" maxlength="7" placeholder="自动，例如 #3567cf" aria-label="强调色十六进制颜色" data-i18n-attrs="{&quot;placeholder&quot;: &quot;自动，例如 #3567cf&quot;, &quot;aria-label&quot;: &quot;强调色十六进制颜色&quot;}"></details>
+  </div>
+  <div class="field appearance-color-field"><span id="appearanceTextLabel" data-i18n="文字颜色">文字颜色</span>
+    <div class="appearance-color-options">
+      <div id="appearanceTextSwatches" class="appearance-color-swatches" role="group" aria-labelledby="appearanceTextLabel"></div>
+      <label class="appearance-picker"><input id="appearanceTextColor" type="color" aria-label="选择文字颜色" data-i18n-attrs="{&quot;aria-label&quot;: &quot;选择文字颜色&quot;}"><span data-i18n="调色板">调色板</span></label>
+      <button id="appearanceTextReset" type="button" class="appearance-color-reset" data-i18n="自动">自动</button>
+    </div>
+    <details class="appearance-hex"><summary data-i18n="色号">色号</summary><input id="appearanceText" type="text" spellcheck="false" maxlength="7" placeholder="自动，例如 #25272b" aria-label="文字颜色十六进制颜色" data-i18n-attrs="{&quot;placeholder&quot;: &quot;自动，例如 #25272b&quot;, &quot;aria-label&quot;: &quot;文字颜色十六进制颜色&quot;}"></details>
+  </div>
+  <p class="hint" data-i18n="文字颜色会随背景适度调整，以保持清晰可读。">文字颜色会随背景适度调整，以保持清晰可读。</p>
+  <p id="appearanceError" class="form-error" role="alert" hidden></p>
+  <div class="appearance-preview" aria-label="配色预览" data-i18n-attrs="{&quot;aria-label&quot;: &quot;配色预览&quot;}">
+    <div class="appearance-preview-sidebar" data-i18n="房间列表">房间列表</div>
+    <div class="appearance-preview-main"><p data-i18n="消息正文与文字颜色预览">消息正文与文字颜色预览</p><button type="button" class="primary-btn" tabindex="-1" aria-hidden="true" data-i18n="强调色">强调色</button></div>
+  </div>
+  <button id="appearanceReset" type="button" class="ghost-btn" data-i18n="恢复默认外观">恢复默认外观</button>
+</section>
+
+          <!-- guard -->
+          <section class="settings-panel" data-panel="guard">
+            <label class="field">
+              <span data-i18n="最大自动接力轮次（留空 = 房间 bot 数）">最大自动接力轮次（留空 = 房间 bot 数）</span>
+              <input type="number" id="s_turns" min="0" />
+            </label>
+            <label class="field">
+              <span data-i18n="单边重复 @ 上限（A 最多 @B 几次）">单边重复 @ 上限（A 最多 @B 几次）</span>
+              <input type="number" id="s_edge" min="0" />
+            </label>
+            <label class="field">
+              <span data-i18n="每轮对话最多调用 Agent 次数">每轮对话最多调用 Agent 次数</span>
+              <input type="number" id="s_calls" min="1" />
+            </label>
+            <label class="field">
+              <span data-i18n="本轮附带的最近历史条数">本轮附带的最近历史条数</span>
+              <input type="number" id="s_catchup" min="0" max="500" aria-describedby="catchupHelp" />
+              <small id="catchupHelp" class="hint" data-i18n="默认 20：从本轮消息前最近 20 条记录中补入有效且对该成员可见的内容，并附带本轮对话。0 仅附带本轮；更高值增加上下文与输入 Token，全部记录仍保存在本地。">默认 20：从本轮消息前最近 20 条记录中补入有效且对该成员可见的内容，并附带本轮对话。0 仅附带本轮；更高值增加上下文与输入 Token，全部记录仍保存在本地。</small>
+            </label>
+            <label class="field">
+              <span data-i18n="旧历史 token 预算（估算，0 = 不限）">旧历史 token 预算（估算，0 = 不限）</span>
+              <input type="number" id="s_historyTokens" min="0" max="200000" step="100" />
+              <small class="hint" data-i18n="与历史条数一起限制每次带入的旧消息；当前输入和本轮协作不裁断。可先设 4000，再按需要调整。全部消息仍保存在本地。">与历史条数一起限制每次带入的旧消息；当前输入和本轮协作不裁断。可先设 4000，再按需要调整。全部消息仍保存在本地。</small>
+            </label>
+          </section>
+
+          <!-- pricing -->
+          <section class="settings-panel" data-panel="pricing" hidden>
+            <div class="field">
+              <span data-i18n="成本显示方式">成本显示方式</span>
+              <div class="perm-group">
+                <label class="perm-opt"><input type="radio" name="costMode" value="none" />
+                  <div><b data-i18n="不显示成本">不显示成本</b><small data-i18n="只显示 token（默认，最可靠）">只显示 token（默认，最可靠）</small></div></label>
+                <label class="perm-opt"><input type="radio" name="costMode" value="cli" />
+                  <div><b data-i18n="CLI 自报">CLI 自报</b><small data-i18n="可能与实际账单不符">可能与实际账单不符</small></div></label>
+              </div>
+            </div>
+
+            <div id="agentPricingEditor"></div>
+            <p class="hint" data-i18n="按 Agent 和模型统一计价，所有使用该 Agent 模型的房间跟随这里的价格。金额是根据原生用量及调用开始时间的估算。">按 Agent 和模型统一计价，所有使用该 Agent 模型的房间跟随这里的价格。金额是根据原生用量及调用开始时间的估算。</p>
+          </section>
+
+          <!-- skills -->
+          <section class="settings-panel" data-panel="skills" hidden>
+            <label class="field"><span data-i18n="技能来源">技能来源</span><select id="skillSourceCategory">
+              <option value="other" data-i18n="本地其他目录">本地其他目录</option>
+            </select></label>
+            <p class="hint" data-i18n="仅更新所选分类。添加目录按当前分类归属，已知 Agent 目录自动归入对应 Agent；本地其他目录提供外部文件引用，默认允许所有已接入 Agent 读取，是否能执行仍取决于原文依赖和原生权限。">仅更新所选分类。添加目录按当前分类归属，已知 Agent 目录自动归入对应 Agent；本地其他目录提供外部文件引用，默认允许所有已接入 Agent 读取，是否能执行仍取决于原文依赖和原生权限。</p>
+            <label class="field"><span data-i18n="搜索技能（名称、说明或来源路径）">搜索技能（名称、说明或来源路径）</span>
+              <input id="skillSearch" type="search" placeholder="搜索技能名称、说明或路径"  data-i18n-attrs="{&quot;placeholder&quot;: &quot;搜索技能名称、说明或路径&quot;}"/></label>
+            <div class="field">
+              <span data-i18n="可用来源">可用来源</span>
+              <div id="skillDiscover" class="skill-list"></div>
+              <button class="ghost-btn" id="skillRescan" type="button" style="margin-top:6px" data-i18n="重新扫描">重新扫描</button>
+            </div>
+            <div class="field">
+              <span data-i18n="自选来源目录">自选来源目录</span>
+              <div id="skillRoots"></div>
+              <button class="ghost-btn" id="skillAddRoot" type="button" data-i18n="添加来源目录…">添加来源目录…</button>
+              <p class="hint" data-i18n="移除目录只停止扫描，不删除文件或已登记引用；点击 Apply 或保存以保留变更。同名本地技能按 SKILL.md 修改时间保留最新来源。">移除目录只停止扫描，不删除文件或已登记引用；点击 Apply 或保存以保留变更。同名本地技能按 SKILL.md 修改时间保留最新来源。</p>
+            </div>
+            <div class="scan-details">
+              <div id="skillScanSummary" class="hint" role="status" data-i18n="来源目录与扫描结果">来源目录与扫描结果</div>
+              <div id="skillScanStatus" class="hint"></div>
+            </div>
+            <div class="field">
+              <span data-i18n="已登记的原生技能引用">已登记的原生技能引用</span>
+              <div id="skillReferences" class="skill-list"></div>
+            </div>
+            <p class="hint" data-i18n="登记来源引用，不复制技能正文。输入 /skill 或 /skill 关键词选择已登记引用，仅交给适用 CLI 使用。登记只影响显式候选，原生自动调用仍按原生规则与设置；移除引用不会禁用原生技能。来源不可用时会提示。">登记来源引用，不复制技能正文。输入 /skill 或 /skill 关键词选择已登记引用，仅交给适用 CLI 使用。登记只影响显式候选，原生自动调用仍按原生规则与设置；移除引用不会禁用原生技能。来源不可用时会提示。</p>
+          </section>
+
+          <!-- history -->
+          <section class="settings-panel" data-panel="history" hidden>
+            <p class="hint" data-i18n="会话记录由 Chorus 保存，每次调用补充最近历史。支持临时会话的 Agent 优先使用临时会话；其他 Agent 按原生设置保存记录，Codex 目标会话也会保存在原生历史中。服务商的数据保留政策仍适用。">会话记录由 Chorus 保存，每次调用补充最近历史。支持临时会话的 Agent 优先使用临时会话；其他 Agent 按原生设置保存记录，Codex 目标会话也会保存在原生历史中。服务商的数据保留政策仍适用。</p>
+            <div class="field"><span data-i18n="归档房间（保留成员、设置和全部记录）">归档房间（保留成员、设置和全部记录）</span>
+              <div id="archivedRoomList" class="skill-list"></div></div>
+            <p class="hint" data-i18n="房间归档会收起整个房间；聊天归档只保存当前消息并清空聊天。恢复聊天归档会合并、按消息 ID 去重，并移除该归档。">房间归档会收起整个房间；聊天归档只保存当前消息并清空聊天。恢复聊天归档会合并、按消息 ID 去重，并移除该归档。</p>
+            <div class="field">
+              <span data-i18n="选择房间">选择房间</span>
+              <input id="histRoomSearch" type="search" placeholder="搜索房间名称" aria-label="搜索房间名称" data-i18n-attrs='{"placeholder":"搜索房间名称","aria-label":"搜索房间名称"}' />
+              <select id="histRoom" aria-label="选择房间" data-i18n-attrs='{"aria-label":"选择房间"}'></select>
+              <small id="histTargetHint" class="hint" data-i18n="归档、导出或清空记录前，请选择具体房间。">归档、导出或清空记录前，请选择具体房间。</small>
+              <button class="ghost-btn" id="histSearch" type="button" data-i18n="搜索所有房间与归档内容">搜索所有房间与归档内容</button>
+            </div>
+            <div class="field">
+              <span><span data-i18n="当前记录：">当前记录：</span><b id="histCurrentCount">0</b> <span data-i18n="条（默认全部保留）">条（默认全部保留）</span></span>
+              <div class="btn-row" style="margin-top:6px">
+                <button class="ghost-btn" id="histArchive" type="button" data-i18n="归档当前并清空">归档当前并清空</button>
+                <button class="ghost-btn" id="histExport" type="button" data-i18n="导出 JSON">导出 JSON</button>
+                <button class="ghost-btn danger-text" id="histClear" type="button" data-i18n="清空当前（不归档）">清空当前（不归档）</button>
+              </div>
+            </div>
+            <div class="field">
+              <span data-i18n="聊天归档（按房间独立）">聊天归档（按房间独立）</span>
+              <div id="histArchiveList" class="skill-list"></div>
+            </div>
+          </section>
+
+          <!-- general -->
+          <section class="settings-panel" data-panel="general" hidden>
+            <label class="field"><span data-i18n="语言">语言</span><select id="s_language"><option value="zh-CN">简体中文</option><option value="en">English</option></select></label>
+            <p class="hint" data-i18n="语言只影响应用界面，消息、文件和原生 Agent 输出保持原文。">语言只影响应用界面，消息、文件和原生 Agent 输出保持原文。</p>
+            <label class="field">
+              <span data-i18n="默认工作目录（新建 bot/房间的兜底 cwd）">默认工作目录（新建 bot/房间的兜底 cwd）</span>
+              <div class="row-inline">
+                <input type="text" id="s_defaultCwd" placeholder="留空 = 应用根目录"  data-i18n-attrs="{&quot;placeholder&quot;: &quot;留空 = 应用根目录&quot;}"/>
+                <button class="ghost-btn" id="s_cwdBrowse" type="button" data-i18n="浏览…">浏览…</button>
+              </div>
+            </label>
+          </section>
+
+          <!-- data -->
+          <section class="settings-panel" data-panel="data" hidden>
+            <div class="field">
+              <span data-i18n="数据目录">数据目录</span>
+              <div class="row-inline">
+                <input type="text" id="s_dataPath" readonly />
+                <button class="ghost-btn" id="openDataBtn" type="button" data-i18n="打开目录">打开目录</button>
+              </div>
+            </div>
+            <p class="hint" data-i18n="bot 配置、房间与消息均以本地 JSON 保存在此目录，刷新/重开不丢。本应用不存储、不转发任何模型密钥或 CLI 登录凭据。">bot 配置、房间与消息均以本地 JSON 保存在此目录，刷新/重开不丢。本应用不存储、不转发任何模型密钥或 CLI 登录凭据。</p>
+          </section>
+
+          <!-- about -->
+          <section class="settings-panel" data-panel="about" hidden>
+            <div class="about-block">
+              <div class="about-name">Chorus</div>
+              <div class="about-meta" id="aboutVersion"></div><div class="field"><span data-i18n="当前程序">当前程序</span><div id="aboutExecutable" class="about-executable"></div></div>
+              <div class="about-meta">License: MIT</div>
+              <p class="hint" data-i18n="本地多 CLI Agent 群聊房间。数据仅存本机；开源后可自由使用与修改。">本地多 CLI Agent 群聊房间。数据仅存本机；开源后可自由使用与修改。</p>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <div class="spacer"></div>
+        <button class="ghost-btn" data-close="settingsModal" type="button" data-i18n="关闭">关闭</button>
+        <button class="ghost-btn" id="settingsApplyBtn" type="button">Apply</button>
+        <button class="primary-btn" id="settingsSaveBtn" type="button" data-i18n="保存">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Archive viewer modal -->
+  <div class="modal-backdrop" id="archiveViewerModal" hidden>
+    <div class="modal" style="max-width:720px">
+      <div class="modal-title" id="archiveViewerTitle" data-i18n="归档内容">归档内容</div>
+      <div id="archiveViewerBody" class="archive-view"></div>
+      <div class="modal-actions">
+        <div class="spacer"></div>
+        <button class="ghost-btn" data-close="archiveViewerModal" type="button" data-i18n="关闭">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="../shared/i18n-catalog.js"></script>
+  <script src="../shared/i18n-main-catalog.js"></script>
+  <script src="../shared/i18n.js"></script>
+  <script src="i18n-ui.js"></script>
+  <script src="../shared/appearance.js"></script>
+  <script src="appearance-ui.js"></script>
+  <script src="../shared/botProfile.js"></script>
+  <script src="../shared/roomProfiles.js"></script>
+  <script src="dialogs.js"></script>
+  <script src="composer.js"></script>
+  <script src="bot-ui.js"></script>
+  <script src="../shared/agentPricing.js"></script>
+  <script src="pricing-ui.js"></script>
+  <script src="../shared/reasoning.js"></script>
+  <script src="model-picker.js"></script>
+  <script src="message-ui.js"></script>
+  <script src="message-format.js"></script>
+  <script src="cli-settings.js"></script>
+  <script src="navigation-ui.js"></script>
+  <script src="room-ui.js"></script>
+  <script src="native-capabilities.js"></script>
+  <script src="../shared/mention.js"></script>
+  <script src="../shared/conversationMode.js"></script>
+  <script src="composer-mode.js"></script>
+  <script src="commands.js"></script>
+  <script src="../../node_modules/@xterm/xterm/lib/xterm.js"></script>
+  <script src="../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <script src="workbench.js"></script>
+  <script src="../shared/messageContent.js"></script>
+  <script src="conversation-ui.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
