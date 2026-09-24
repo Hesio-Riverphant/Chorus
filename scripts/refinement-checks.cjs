@@ -68,24 +68,43 @@ module.exports = async function refinementChecks({ win, persistence, check }) {
   });
   const stored = JSON.parse(fs.readFileSync(path.join(persistence.getDataPath(), 'settings.json'), 'utf8'));
   check('外观保存通过真实IPC落盘', stored.appearance?.mode === 'system' && stored.appearance.preset === 'graphite');
+  const waitForSystemAppearance = (mode, expectedColor) => page(async (expectedMode, expectedBackground) => {
+    const started = performance.now(), deadline = started + 3000;
+    let observation;
+    do {
+      const bodyStyle = getComputedStyle(document.body);
+      observation = {
+        mode: document.documentElement.dataset.theme,
+        systemDark: matchMedia('(prefers-color-scheme: dark)').matches,
+        background: bodyStyle.backgroundColor,
+        variable: getComputedStyle(document.documentElement).getPropertyValue('--bg').trim(),
+        transition: bodyStyle.transitionDuration,
+        visibility: document.visibilityState,
+        elapsedMs: Math.round(performance.now() - started),
+      };
+      if (observation.mode === expectedMode && observation.systemDark === (expectedMode === 'dark') &&
+          observation.background === expectedBackground) return { ok: true, ...observation };
+      // Poll the rendered color as well as the theme attribute: emulation,
+      // matchMedia delivery and style recalculation need not share one task.
+      await new Promise(resolve => setTimeout(resolve, 50));
+    } while (performance.now() < deadline);
+    return { ok: false, expectedMode, expectedBackground, ...observation };
+  }, mode, expectedColor);
   win.webContents.debugger.attach('1.3');
   try {
+    // Exercise the visible desktop window; keep it visible for later animation-frame
+    // checks. The fixture owner destroys it when the smoke run completes.
+    win.show();
     await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
-    await page(async () => {
-      for (let n = 0; n < 40 && document.documentElement.dataset.theme !== 'dark'; n++) {
-        getComputedStyle(document.body).backgroundColor; await new Promise(resolve => setTimeout(resolve, 50));
-      }
-    });
-    const dark = await page(() => getComputedStyle(document.body).backgroundColor === 'rgb(32, 34, 38)');
+    const dark = await waitForSystemAppearance('dark', 'rgb(32, 34, 38)');
     if (process.env.AR_UI_EVIDENCE_DIR) fs.writeFileSync(path.join(process.env.AR_UI_EVIDENCE_DIR, 'dark.png'), (await win.webContents.capturePage()).toPNG());
     await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
-    await page(async () => {
-      for (let n = 0; n < 40 && document.documentElement.dataset.theme !== 'light'; n++) {
-        getComputedStyle(document.body).backgroundColor; await new Promise(resolve => setTimeout(resolve, 50));
-      }
-    });
-    check('跟随系统在真实渲染中即时切换明暗', dark && await page(() => getComputedStyle(document.body).backgroundColor === 'rgb(247, 247, 248)'));
-  } finally { win.webContents.debugger.detach(); }
+    const light = await waitForSystemAppearance('light', 'rgb(247, 247, 248)');
+    console.log('System appearance observations:', JSON.stringify({ dark, light }));
+    check('跟随系统在真实渲染中即时切换明暗', dark.ok && light.ok);
+  } finally {
+    win.webContents.debugger.detach();
+  }
   await page(async () => {
     openSettings('appearance');
     document.querySelector('#appearancePreset').value = 'sage';

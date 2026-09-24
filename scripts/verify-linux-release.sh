@@ -13,9 +13,13 @@ mkdir "$zip_dir"
 unzip -q "$zip_file" -d "$zip_dir"
 node scripts/check-release.js --bundle "$zip_dir"
 test -x "$zip_dir/chorus"
+# Test the documented ZIP setup without the build-only AppArmor grant.
+sudo apparmor_parser -R "$RUNNER_TEMP/chorus-ci-apparmor"
+sudo chown root:root "$zip_dir/chrome-sandbox"
+sudo chmod 4755 "$zip_dir/chrome-sandbox"
 node scripts/package-desktop.js --smoke-existing "$zip_dir"
-sudo dpkg -i "$deb_file"
 trap 'sudo dpkg -r chorus' EXIT
+sudo apt-get install -y "$deb_file"
 node scripts/check-release.js --bundle /opt/Chorus
 node scripts/package-desktop.js --smoke-existing /opt/Chorus
 sudo dpkg -r chorus

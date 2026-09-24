@@ -76,9 +76,14 @@ app.whenReady().then(async () => {
   const sidebarBeforeDrag = savedLayout().sidebarWidth;
   await dragSplitter('sidebarWidth', 32);
   check('actual pointer drag resizes sidebar and writes layout to disk', await until(() => savedLayout().sidebarWidth === sidebarBeforeDrag + 32));
+  // The window manager may cap a 1280px request to a 1008px CI viewport.
+  // First create room using the real splitter, then expand back to the original
+  // valid size so this persistence check does not mistake correct clamping for failure.
   const dockBeforeDrag = savedLayout().dockWidth;
+  await dragSplitter('dockWidth', 44);
+  check('actual pointer drag shrinks dock and writes layout to disk', await until(() => savedLayout().dockWidth === dockBeforeDrag - 44));
   await dragSplitter('dockWidth', -44);
-  const dockDragged = await until(() => savedLayout().dockWidth === dockBeforeDrag + 44);
+  const dockDragged = await until(() => savedLayout().dockWidth === dockBeforeDrag);
   check('actual pointer drag resizes dock and writes layout to disk', dockDragged);
   const afterDockDrag = await evaluate(() => ({ mainWidth: document.getElementById('main').getBoundingClientRect().width,
     dockWidth: document.getElementById('workbenchDock').getBoundingClientRect().width, resizing: document.body.classList.contains('wb-resizing'),
