@@ -91,8 +91,8 @@ function listModels(cliType, { bots = [], settings = {}, homeDir = os.homedir(),
     const cached = codexCache(homeDir, env);
     cached.models.forEach(add);
     notices.push(cached.notice);
-    CODEX_CANDIDATES.forEach((id) => add({ id, label: I18n.tpl`${MODEL_LABELS[id]} · 候选`, source: 'candidate' }));
-    notices.push(I18n.t('“候选”为补充模型名称，不代表当前提供商已授权；可自定义完整模型 ID。'));
+    CODEX_CANDIDATES.forEach((id) => add({ id, label: MODEL_LABELS[id], source: 'candidate' }));
+    notices.push(I18n.t('补充模型名称不代表当前提供商已授权；可自定义完整模型 ID。'));
   } else if (cliType === 'claude') {
     CLAUDE_ALIASES.forEach((id) => add({ id, label: MODEL_LABELS[id], source: 'claude-alias' }));
     notices.push(I18n.t('具体版本随当前账号及提供商配置。'));

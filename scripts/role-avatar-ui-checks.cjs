@@ -1,11 +1,23 @@
 'use strict';
 module.exports = async ({ win, persistence, check }) => {
   const page = (fn, ...args) => win.webContents.executeJavaScript(`(${fn.toString()})(...${JSON.stringify(args)})`);
-  const bots = [persistence.saveBot({ name: 'Role Alpha', cliType: 'claude', role: '主持人', persona: 'Personal instructions', enabled: true }),
+  const bots = [persistence.saveBot({ name: 'Role Alpha', cliType: 'claude', role: '执行者', persona: 'Personal instructions', enabled: true }),
     persistence.saveBot({ name: 'Role Beta', cliType: 'codex', role: '审查者', enabled: true })];
   const first = persistence.saveRoom({ name: 'Role One', botIds: bots.map(bot => bot.id), moderatorBotId: bots[0].id });
   const second = persistence.saveRoom({ name: 'Role Two', botIds: bots.map(bot => bot.id), moderatorBotId: bots[0].id });
   const side = persistence.createSideChat(first.id);
+  check('CLI images keep transparent backgrounds in both themes and cover the fallback text', await page(() => {
+    const host = document.createElement('div'); document.body.append(host);
+    const previous = document.documentElement.dataset.theme;
+    let ok = true;
+    for (const theme of ['dark', 'light']) {
+      document.documentElement.dataset.theme = theme;
+      host.innerHTML = avatarHtml({ name: 'Logo', cliType: 'codex' });
+      ok &&= getComputedStyle(host.querySelector('img')).backgroundColor === 'rgba(0, 0, 0, 0)' && getComputedStyle(host.querySelector('.avatar-fallback')).visibility === 'hidden';
+    }
+    if (previous == null) delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = previous;
+    host.remove(); return ok;
+  }));
   check('host checkbox changes the displayed role immediately and save keeps other rooms/global roles isolated', await page(async (roomId, botId) => {
     closeAllModals(); await reloadFromMain(); await switchRoom(roomId);
     openBotEdit(roomMembers(currentRoom()).find(bot => bot.id === botId));
@@ -28,7 +40,7 @@ module.exports = async ({ win, persistence, check }) => {
     const select = document.querySelector('#f_avatarType');
     const options = [...select.options].map(option => option.value).join(',') === 'default,text,image';
     select.value = 'text'; document.querySelector('#f_avatarText').value = ''; select.dispatchEvent(new Event('change'));
-    const preview = document.querySelector('#f_avatarPreview img')?.getAttribute('src') === 'assets/deepseek.svg' && !document.querySelector('#f_avatarEasterEgg').hidden;
+    const preview = document.querySelector('#f_avatarPreview img')?.getAttribute('src') === 'assets/deepseek.svg' && !document.querySelector('#f_avatarEasterEgg').hidden && document.querySelector('#f_avatarEasterEgg').textContent.trim() === '小彩蛋';
     await saveBot(); return options && preview;
   }, first.id, bots[1].id) && persistence.listBots().find(bot => bot.id === bots[1].id).avatar?.text === '');
   check('custom CLI defaults to image choice; missing and failed images have a safe visible fallback', await page(() => {

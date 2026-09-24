@@ -3,13 +3,14 @@ const { randomUUID, createHash } = require('node:crypto');
 const I18n = require('../../shared/i18n');
 const { safeText } = require('./activities');
 const { validateAnswers } = require('./inputAnswers');
+const { QUESTION_TIMEOUT_MS } = require('./questionTool');
 
 const READ_ONLY_TOOLS = new Set(['Read', 'Grep', 'Glob', 'AskUserQuestion']);
 
 // Implements Claude's stream-json host permission protocol. Grants live only
 // inside this invocation and never modify native permission/config files.
 function createClaudeInput({ prompt, permissionMode, probe = false, goal = false, write, end, emit,
-  onPendingChange = () => {}, onExpire, onError, inputTimeoutMs = 30 * 60 * 1000 }) {
+  onPendingChange = () => {}, onExpire, onError, inputTimeoutMs = QUESTION_TIMEOUT_MS, approvalTimeoutMs = 30 * 60 * 1000 }) {
   const inputs = new Map(), nativeIds = new Map(), grants = new Set(), deferredInputs = [];
   const initializeId = 'chorus-input-initialize';
   let closed = false, initialized = false, resultReceived = false;
@@ -78,6 +79,7 @@ function createClaudeInput({ prompt, permissionMode, probe = false, goal = false
       try { pending.questions = questionsFor(input); }
       catch (error) { deny(nativeId, error.message); return; }
     }
+    const timeoutMs = pending.questions ? inputTimeoutMs : approvalTimeoutMs;
     pending.timer = setTimeout(() => {
       if (closed || !inputs.has(requestId)) return;
       try {
@@ -89,9 +91,9 @@ function createClaudeInput({ prompt, permissionMode, probe = false, goal = false
           remove(requestId, 'expired');
         }
       } catch (error) { fail(error); }
-    }, inputTimeoutMs);
+    }, timeoutMs);
     inputs.set(requestId, pending); nativeIds.set(nativeId, requestId); onPendingChange();
-    const common = { requestId, isBlocking: true, expiresAt: Date.now() + inputTimeoutMs };
+    const common = { requestId, isBlocking: true, expiresAt: Date.now() + timeoutMs };
     emit('input_request', pending.questions ? { ...common, questions: pending.questions } : {
       ...common, type: 'approval', decisions: ['accept', 'acceptForSession', 'decline'],
       detail: safeText(rawDetail, 16000) + '\n\n' + I18n.t('会话内允许仅适用于本次运行中完全相同的工具与参数，不修改原生配置。'),

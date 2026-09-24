@@ -10,18 +10,18 @@ Chorus is a local desktop app that connects installed Agent CLIs. Add different 
 
 Requires **Windows 10 (1809+)/11 x64 or Ubuntu 24.04 x64** and at least one installed, authenticated Agent CLI. The x64 package runs on Intel/AMD x86-64 processors. Windows 11 is tested; Windows 10 has not had a hardware acceptance run. Desktop packages include the runtime; Node.js is not required.
 
-1. Run `Chorus-0.6.0-windows-x64-setup.exe`, or extract the complete matching zip and run `Chorus.exe`.
+1. Run `Chorus-0.6.1-windows-x64-setup.exe`, or extract the complete matching zip and run `Chorus.exe`.
 2. Open **Settings → Agent connections**, scan and enable an agent, then create a member, fetch its model list and test the connection.
 3. Create a room, choose its project directory and members, and send a task. Inspect tools, file changes and usage as it runs, or stop it at any time.
 
 [Download the latest release](https://github.com/Hesio-Riverphant/Chorus/releases/latest). Windows offers an installer and a zip, both x64 and unsigned. Ubuntu offers a `.deb` and a zip.
 
-To uninstall, use **Uninstall Chorus** in the Start menu or run the included `Uninstall Chorus.cmd`. A separate uninstall launcher zip is also available. It opens the registered installed edition's uninstaller and retains chat data. For the portable edition, close the app and delete its extracted directory.
+Both Windows editions include `Uninstall Chorus.cmd`. Close all Chorus copies, run it, and confirm the exact scope: this app directory and the chats, settings and caches shared by all Chorus copies. Upgrades retain data. Unknown files, links or overlapping project paths stop removal for inspection. External projects and native Agent configuration are preserved.
 
 On Ubuntu, install the recommended `.deb`, then open Chorus from the application menu:
 
 ```sh
-sudo apt install ./Chorus-0.6.0-linux-amd64.deb
+sudo apt install ./Chorus-0.6.1-linux-amd64.deb
 # Uninstall while retaining chat data
 sudo apt remove chorus
 ```
@@ -49,19 +49,21 @@ Chat handles regular conversations. Plan and Goal use agents that support those 
 
 `Choose a project → Add members → Send a task → Review the process and result`
 
+Explicit `@member` messages limit both dispatch and later context to their recipients. Use `@all` for shared discussion. Native failures retain their error and partial work; retry or mention the interrupted member to continue.
+
 Type `/` for available commands. Use `/model` to change a member's model and `/context` to view native usage. Ctrl+K searches messages and archives. Relay limits and concurrency can be adjusted in Settings.
 
-Native Codex and Claude approvals and questions appear as cards. Unanswered questions are retained after a 30-minute wait; answering starts an explicit continuation. Session approvals apply only to that native invocation. Optional usage budgets stop new dispatches after usage is reported while active tasks finish.
+Codex and Claude support question and approval cards; Kimi supports native single-choice questions. Unanswered questions are retained after one minute; answering starts an explicit continuation. Other CLIs currently use text questions. Session approvals apply only to that native invocation. Optional usage budgets stop new dispatches after usage is reported while active tasks finish.
 
 ## Who it is for
 
 Chorus is for people who already use coding agents and want one workspace for comparing answers, delegating work, reviewing code and keeping local conversations. Chorus manages rooms and message flow; models, permissions and native skills remain with each CLI.
 
-Model lists show native configuration or provider results. Account access and a real connection determine whether a model works. Tools may edit project files or run commands, so choose appropriate permissions. Kimi noninteractive tool execution currently requires explicit full permission.
+Model lists show native configuration or provider results. Account access and a real connection determine whether a model works. Tools may edit project files or run commands, so choose appropriate permissions. Kimi currently requires explicit full permission.
 
 ## Data and settings
 
-- Windows data: `%APPDATA%/agent-room`. Close the app before backing up the entire directory. Upgrades retain chats; uninstalling retains data.
+- Windows data: `%APPDATA%/agent-room`. Close the app before backing up the entire directory. Upgrades retain chats; confirmed complete removal deletes shared data.
 - Linux data: `${XDG_CONFIG_HOME:-~/.config}/agent-room`.
 - Regular rooms share member profiles. Side chats can be edited independently after creation. A member's working directory overrides the room directory, followed by the default directory.
 - MCP/plugin settings use agent defaults and room member overrides. Skill registration references original files.

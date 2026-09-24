@@ -81,16 +81,8 @@ async function packageInstallers({ sourceRoot = path.resolve(__dirname, '..'), o
     const error = new Error('Installer creation modified the audited desktop bundle');
     error.findings = desktopAudit.failures; throw error;
   }
-  if (platform === 'win32') {
-    const directory = path.join(output, 'uninstall');
-    fs.mkdirSync(directory);
-    for (const file of ['Uninstall Chorus.cmd', 'uninstall-chorus.ps1']) {
-      fs.copyFileSync(path.join(sourceRoot, 'scripts', file), path.join(directory, file), fs.constants.COPYFILE_EXCL);
-    }
-    const archivePath = path.join(output, 'artifacts', `Chorus-${manifest.version}-windows-uninstall.zip`);
-    await require('app-builder-lib/out/targets/archive').archive('zip', archivePath, directory, { withoutDir: true });
-    artifacts.push(archivePath);
-  }
+  // Uninstall is bound to the release directory and ships inside both the
+  // desktop ZIP and the installed tree. A detached launcher cannot prove scope.
   const finalInputs = publicationFiles(sourceRoot);
   if (finalInputs.length !== snapshot.size || finalInputs.some(file => snapshot.get(file) !== sha256(fs.readFileSync(path.join(sourceRoot, file))))) {
     throw new Error(`Source changed during packaging; rebuild this candidate: ${output}`);

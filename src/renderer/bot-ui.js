@@ -22,7 +22,7 @@ function avatarHtml(bot) {
   const avatar = bot.avatar;
   if (avatar?.type === 'text') return avatar.text?.trim()
     ? `<span class="avatar text-avatar">${esc(avatar.text)}</span>`
-    : image('assets/deepseek.svg', I18n.t('彩蛋 · DeepSeek'), 'avatar-easter-egg');
+    : image('assets/deepseek.svg', I18n.t('小彩蛋'), 'avatar-easter-egg');
   if (avatar?.type === 'image') return avatar.dataUrl && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(avatar.dataUrl)
     ? image(avatar.dataUrl, bot.name || label, 'custom-avatar')
     : `<span class="avatar text-avatar" title="${esc(label)}">${fallback}</span>`;
@@ -278,6 +278,7 @@ function wireBotProfile() {
     updatePersonaPlaceholder();
   });
   $('#f_moderator').addEventListener('change', () => {
+    state.botRoleEdited = false;
     $('#f_rolePreset').value = $('#f_moderator').checked ? '主持人' : '协作者';
     $('#f_role').value = $('#f_rolePreset').value;
     updatePersonaPlaceholder();

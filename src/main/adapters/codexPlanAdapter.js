@@ -8,6 +8,7 @@ const { isModelIdentifier } = require('../../shared/botProfile');
 const { codexSubagents, codexChildEvent } = require('./subagents');
 const { codexTokenUsage } = require('./tokenUsage');
 const { validateAnswers } = require('./inputAnswers');
+const { questionTool, QUESTION_TIMEOUT_MS } = require('./questionTool');
 
 const MAX_TEXT = 4 * 1024 * 1024;
 const SANDBOX = { read_only: 'read-only', workspace: 'workspace-write', full: 'danger-full-access' };
@@ -36,7 +37,7 @@ function capabilityConfig(value) {
 // Chat/plan use temporary threads. Native goals require a persistent thread.
 // Every run owns its thread; no unrelated native conversation is resumed.
 // Plan mode uses Codex's actual collaboration mode, including request_user_input.
-function runCodexNative({ bot, prompt, workspace, noBytesTimeoutMs = 90000, inputTimeoutMs = 30 * 60 * 1000,
+function runCodexNative({ bot, prompt, workspace, noBytesTimeoutMs = 90000, inputTimeoutMs = QUESTION_TIMEOUT_MS, approvalTimeoutMs = 30 * 60 * 1000,
   nativeConfig = {}, probe = false, cliSettings = {}, rpcFactory = options => new CodexRpc(options) }) {
   if (bot.cliType !== 'codex') throw new Error(I18n.t('原生运行仅适用于 Codex'));
   if (bot.model && !isModelIdentifier(bot.model)) throw new Error(I18n.t('模型名称格式无效'));
@@ -184,7 +185,8 @@ function runCodexNative({ bot, prompt, workspace, noBytesTimeoutMs = 90000, inpu
     publishMessage(message);
   }
   function serverRequest(message) {
-    const { id, method, params = {} } = message;
+    const { id, method } = message;
+    let params = message.params || {};
     if (method === 'currentTime/read') { rpc.respond(id, { currentTimeAt: Math.floor(Date.now() / 1000) }); return; }
     if (['item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'item/permissions/requestApproval'].includes(method)) {
       const permissions = method === 'item/permissions/requestApproval';
@@ -209,10 +211,10 @@ function runCodexNative({ bot, prompt, workspace, noBytesTimeoutMs = 90000, inpu
         timer: setTimeout(() => {
           try { decline(); inputs.delete(requestId); emit('input_resolved', { requestId, reason: 'expired' }); armTimer(); }
           catch (error) { finish({ error: error.message }); }
-        }, inputTimeoutMs) };
+        }, approvalTimeoutMs) };
       inputs.set(requestId, input); armTimer();
       emit('input_request', { requestId, type: 'approval', detail, decisions, isBlocking: true,
-        expiresAt: Date.now() + inputTimeoutMs });
+        expiresAt: Date.now() + approvalTimeoutMs });
       return;
     }
     if (method === 'mcpServer/elicitation/request') {
@@ -221,22 +223,31 @@ function runCodexNative({ bot, prompt, workspace, noBytesTimeoutMs = 90000, inpu
         summary: I18n.t('此工具需要交互表单，请在原生 Agent 完成设置后重试'), detail: '' });
       return;
     }
-    if (method !== 'item/tool/requestUserInput') { rpc.reject(id, I18n.t('Chorus 不支持此交互请求')); return; }
+    const dynamic = method === 'item/tool/call';
+    if (dynamic) {
+      if (probe || params.tool !== questionTool.name || params.namespace || !params.arguments ||
+          typeof params.arguments !== 'object' || Array.isArray(params.arguments) || JSON.stringify(params.arguments).length > 32000) {
+        rpc.respond(id, { success: false, contentItems: [{ type: 'inputText', text: I18n.t('Chorus 不支持此交互请求') }] }); return;
+      }
+      params = { ...params.arguments, isBlocking: true };
+    } else if (method !== 'item/tool/requestUserInput') { rpc.reject(id, I18n.t('Chorus 不支持此交互请求')); return; }
+    if (probe) { rpc.reject(id, I18n.t('连接测试不支持交互提问')); return; }
     if (!Array.isArray(params.questions) || !params.questions.length || params.questions.length > 10 || inputs.size >= 8) {
       rpc.reject(id, I18n.t('提问数量无效')); finish({ error: I18n.t('Codex 交互提问格式无效') }); return;
     }
     const ids = new Set();
     const questions = params.questions.map(question => {
       if (!question || typeof question.id !== 'string' || !question.id || question.id.length > 200 || ids.has(question.id) ||
-          question.isSecret || typeof question.question !== 'string' ||
-          (question.options != null && (!Array.isArray(question.options) || question.options.length > 20))) throw new Error(I18n.t('Codex 提问格式不受支持'));
+          question.isSecret || typeof question.question !== 'string' || !question.question.trim() || question.question.length > 3000 ||
+          (question.options != null && (!Array.isArray(question.options) || question.options.length > 20 ||
+            question.options.some(option => !option || typeof option.label !== 'string' || !option.label.trim() || option.label.length > 200)))) throw new Error(I18n.t('Codex 提问格式不受支持'));
       ids.add(question.id);
       return { id: question.id, header: safeText(question.header, 100), question: safeText(question.question, 3000),
-        isOther: !!question.isOther, options: question.options?.map(option => ({ label: safeText(option.label, 200),
+        isOther: dynamic || !!question.isOther, options: question.options?.map(option => ({ label: safeText(option.label, 200),
           description: safeText(option.description, 1000) })) || null };
     });
     const requestId = randomUUID();
-    const input = { id, questions, blocking: params.isBlocking !== false,
+    const input = { id, questions, dynamic, blocking: params.isBlocking !== false,
       timer: setTimeout(() => finish({ error: I18n.t('等待回复超时；问题已保留，回答后可继续') }), inputTimeoutMs) };
     inputs.set(requestId, input);
     armTimer();
@@ -250,7 +261,10 @@ function runCodexNative({ bot, prompt, workspace, noBytesTimeoutMs = 90000, inpu
       if (!input.decisions.includes(decision)) throw new Error(I18n.t('授权选项无效'));
       rpc.respond(input.id, input.permissions ? { permissions: decision === 'decline' ? {} : input.permissions,
         scope: decision === 'acceptForSession' ? 'session' : 'turn' } : { decision });
-    } else rpc.respond(input.id, { answers: validateAnswers(input.questions, answers) });
+    } else {
+      const result = { answers: validateAnswers(input.questions, answers) };
+      rpc.respond(input.id, input.dynamic ? { success: true, contentItems: [{ type: 'inputText', text: JSON.stringify(result) }] } : result);
+    }
     clearTimeout(input.timer); inputs.delete(requestId);
     emit('input_resolved', { requestId });
     armTimer();
@@ -306,8 +320,11 @@ function runCodexNative({ bot, prompt, workspace, noBytesTimeoutMs = 90000, inpu
         acc.usage = normalized.usage;
         acc.contextUsage = normalized.contextUsage;
         emit('usage', acc.usage); emit('context_usage', acc.contextUsage);
-      } else if (method === 'error' && !params.willRetry) {
-        finish({ error: params.error?.message || I18n.t('Codex 运行失败') });
+      } else if (method === 'error') {
+        const detail = safeText(params.error?.message || I18n.t('Codex 运行失败'));
+        if (params.willRetry) emitActivity(acc, emit, { id: `native-retry:${nextActivityOrder(acc)}`, kind: 'tool',
+          name: I18n.t('原生 Agent 正在重试'), status: 'error', detail });
+        else finish({ error: detail });
       } else if (method === 'turn/completed') {
         const turn = params.turn || {};
         turnInProgress = false;
@@ -329,6 +346,7 @@ function runCodexNative({ bot, prompt, workspace, noBytesTimeoutMs = 90000, inpu
       await rpc.initialize();
       if (finishing || settled || aborted) return;
       const started = await rpc.request('thread/start', { cwd: workspace, ephemeral: !isGoal,
+        ...(!probe ? { dynamicTools: [questionTool] } : {}),
         approvalPolicy: probe || bot.permissionMode === 'full' ? 'never' : 'on-request', sandbox: probe ? 'read-only' : SANDBOX[bot.permissionMode] || 'read-only',
         ...(bot.model ? { model: bot.model, allowProviderModelFallback: false } : {}),
         ...(Object.keys(config).length ? { config } : {}) });

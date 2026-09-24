@@ -6,6 +6,7 @@ const { terminateTree } = require('./processTree');
 const { StringDecoder } = require('node:string_decoder');
 const { safeText } = require('./activities');
 const { locateCliExecutable } = require('../cliDiscovery');
+const { createDiagnostics } = require('./diagnostics');
 
 // Only fixed launcher arguments enter the shell. Protocol data uses stdin.
 class CodexRpc {
@@ -38,17 +39,18 @@ class CodexRpc {
         parseLine(line);
       }
     });
-    // Native diagnostics can contain provider data. Expose only protocol errors.
-    this.child.stderr.on('data', () => {});
+    const diagnostics = createDiagnostics();
+    this.child.stderr.on('data', chunk => diagnostics.push(chunk));
     this.child.stdin.on('error', error => this.transportError(error));
     this.child.on('error', error => this.transportError(error));
-    this.child.on('close', code => {
+    this.child.on('close', (code, signal) => {
       if (this.processExited) return;
       this.processExited = true;
       if (!this.closed && code === 0) { buffer += decoder.end(); if (buffer.trim()) parseLine(buffer); }
       this.closed = true;
-      this.fail(new Error(I18n.t('Codex 连接已结束')));
-      this.publish({ method: 'transport/closed', params: {} });
+      const message = [I18n.tpl`Codex 连接已结束（退出码 ${code ?? signal ?? 'unknown'}）`, diagnostics.text()].filter(Boolean).join('\n');
+      this.fail(new Error(message));
+      this.publish({ method: 'transport/closed', params: { message } });
     });
   }
 

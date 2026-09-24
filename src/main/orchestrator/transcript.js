@@ -3,6 +3,7 @@ const I18n = require('../../shared/i18n');
 const { getDefaultPersona } = require('../../shared/botProfile');
 const { estimateTokens } = require('../../shared/util');
 const { DEFAULTS } = require('../../shared/constants');
+const { parseMentions } = require('../../shared/mention');
 
 function labelOf(msg, bots) {
   if (msg.authorType === 'human') return '房主';
@@ -13,14 +14,29 @@ function labelOf(msg, bots) {
 
 function buildMessagesText(messages, bots) {
   return messages
-    .filter((m) => typeof m.text === 'string' && m.text.trim())
-    .map((m) => `${labelOf(m, bots)}：${m.text}`)
+    .filter((m) => (typeof m.text === 'string' && m.text.trim()) || m.error)
+    .map((m) => `${labelOf(m, bots)}：${m.text || ''}${['error', 'aborted'].includes(m.status)
+      ? `\n【未完成的执行；请依据最新请求决定是否续接，先核对已有副作用】${m.error || '执行已中断'}` : ''}`)
     .join('\n');
 }
 
 function isTranscriptMessage(message, bot) {
-  return !message.supersededBy && message.status === 'done' && typeof message.text === 'string' && message.text.trim() &&
+  return !message.supersededBy && ['done', 'error', 'aborted'].includes(message.status) &&
+    ((typeof message.text === 'string' && message.text.trim()) || message.error) &&
+    (!bot || !Array.isArray(message.audienceBotIds) || message.audienceBotIds.includes(bot.id)) &&
     (!bot || !['plan', 'goal'].includes(message.mode) || !Array.isArray(message.modeTargetIds) || message.modeTargetIds.includes(bot.id));
+}
+
+// Explicit human recipients also bound later history delivery. Resolve older
+// records at read time; no rewrite of personal history is required.
+function audienceFor(message, messages, bots) {
+  if (Array.isArray(message.audienceBotIds)) return message.audienceBotIds;
+  const human = message.authorType === 'human' ? message : messages.find(item => item.id === message.roundId && item.authorType === 'human');
+  if (!human) return null;
+  if (Array.isArray(human.audienceBotIds)) return human.audienceBotIds;
+  if (human.targetBotId) return [human.targetBotId];
+  const mentions = parseMentions(human.text || '', bots);
+  return mentions.length && !mentions.includes('all') ? mentions : null;
 }
 
 // The room log remains complete. Only older messages are bounded for a new
@@ -32,7 +48,9 @@ function selectTranscript(messages, bot, bots, { roundId = null, catchupMessages
   if (anchor < 0) throw new Error(I18n.t('本轮消息不存在，不能确定输入历史范围'));
   const count = Number.isFinite(Number(catchupMessages)) ? Math.max(0, Math.min(500, Math.floor(Number(catchupMessages)))) : DEFAULTS.catchupMessages;
   const budget = Number.isSafeInteger(Number(historyTokenBudget)) && Number(historyTokenBudget) >= 0 ? Number(historyTokenBudget) : DEFAULTS.historyTokenBudget;
-  const eligible = messages.slice(0, anchor).filter(message => isTranscriptMessage(message, bot));
+  const visible = message => isTranscriptMessage(message, bot) &&
+    (!bot || !audienceFor(message, messages, bots) || audienceFor(message, messages, bots).includes(bot.id));
+  const eligible = messages.slice(0, anchor).filter(visible);
   const history = count ? eligible.slice(-count) : [];
   let historyTokens = 0, start = history.length;
   // Keep a contiguous recent suffix; do not cut sentences or silently skip a
@@ -43,8 +61,19 @@ function selectTranscript(messages, bot, bots, { roundId = null, catchupMessages
     historyTokens += tokens;
     start--;
   }
-  const selected = history.slice(start);
-  const current = messages.slice(anchor).filter(message => isTranscriptMessage(message, bot));
+  let selected = history.slice(start);
+  if (roundId != null && bot) {
+    const latest = eligible.findLast(message => message.authorType === 'bot' && message.authorId === bot.id);
+    if (latest && ['error', 'aborted'].includes(latest.status)) {
+      // Recovery is explicit new work. Keep the original task and unfinished
+      // result even when normal history is disabled; never replay side effects.
+      const recovery = new Set([latest.roundId, ...selected.map(message => message.id), ...eligible.slice(0, eligible.indexOf(latest) + 1)
+        .filter(message => message.roundId === latest.roundId).map(message => message.id)]);
+      selected = eligible.filter(message => recovery.has(message.id));
+      historyTokens = selected.reduce((total, message) => total + estimateTokens(buildMessagesText([message], bots) + '\n'), 0);
+    }
+  }
+  const current = messages.slice(anchor).filter(visible);
   return { messages: [...selected, ...current], historyMessages: selected.length, currentMessages: current.length,
     historyTokenEstimate: historyTokens, omittedHistoryMessages: eligible.length - selected.length, historyTokenBudget: budget };
 }
@@ -70,6 +99,12 @@ function buildPrompt(bot, slice, bots, room, skillBlocks) {
 
   const persona = bot.persona && bot.persona.trim() ? bot.persona : getDefaultPersona(bot.role, bot.customRole);
   if (persona) parts.push(`【你的角色设定】${persona}`);
+  const questionTools = { codex: 'chorus_ask_user', claude: 'AskUserQuestion', kimi: 'AskUserQuestion' };
+  parts.push(questionTools[bot.cliType]
+    ? `【用户交互】需要用户选择或补充信息时调用 ${questionTools[bot.cliType]}，以实际工具返回的回答继续；普通文字不会生成提问卡片。`
+    : '【用户交互】此 CLI 接入使用文字问答；需要信息时直接在回复中提出问题，等待下一条消息。');
+  const latestHuman = slice.findLast(message => message.authorType === 'human');
+  if (latestHuman && audienceFor(latestHuman, slice, bots)) parts.push('【接收范围】本轮仅发送给用户点名的成员；回复中的点名不会自动扩大接收范围。');
 
   for (const sk of skillBlocks) {
     if (sk.mode === 'unavailable') {
@@ -103,4 +138,4 @@ function buildPrompt(bot, slice, bots, room, skillBlocks) {
   return parts.join('\n\n');
 }
 
-module.exports = { labelOf, buildPrompt, isTranscriptMessage, selectTranscript };
+module.exports = { labelOf, buildPrompt, isTranscriptMessage, selectTranscript, audienceFor };

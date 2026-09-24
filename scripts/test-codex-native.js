@@ -8,6 +8,33 @@ const { runCodexNative } = require('../src/main/adapters/codexPlanAdapter');
 const { CodexRpc } = require('../src/main/adapters/codexRpc');
 const { normalizeActivity } = require('../src/main/adapters/activities');
 
+test('ordinary chat advertises a real question tool and returns chosen answers over its native call contract', async () => {
+  const f = fixture({ bot: { cliType: 'codex', permissionMode: 'full' } }); await f.ready();
+  const tool = f.calls.find(call => call.method === 'thread/start').params.dynamicTools[0];
+  assert.equal(tool.type, 'function'); assert.equal(tool.deferLoading, false);
+  f.send('item/tool/call', { tool: tool.name, callId: 'choice-call', arguments: { questions: [
+    { id: 'choice', question: 'Which task?', options: [{ label: 'A' }, { label: 'B' }] },
+  ] } }, 61);
+  const card = f.events.find(event => event.type === 'input_request').payload;
+  assert.ok(card.expiresAt - Date.now() > 59000 && card.expiresAt - Date.now() <= 60000);
+  f.handle.respondInput(card.requestId, { choice: { answers: ['custom answer'] } });
+  assert.deepEqual(f.responses.at(-1), { id: 61, result: { success: true, contentItems: [
+    { type: 'inputText', text: JSON.stringify({ answers: { choice: { answers: ['custom answer'] } } }) },
+  ] } });
+  f.complete(); assert.equal((await f.handle.promise).error, null);
+});
+
+test('dynamic question expiration defers without a fabricated answer and retry diagnostics do not abort', async () => {
+  const f = fixture({ inputTimeoutMs: 10 }); await f.ready();
+  f.send('error', { willRetry: true, error: { message: 'Gateway stream terminated (request-id test)' } });
+  assert.ok(f.events.some(event => event.type === 'activity' && event.payload.detail.includes('Gateway stream terminated')));
+  f.send('item/tool/call', { tool: 'chorus_ask_user', arguments: { questions: [{ id: 'q', question: 'Continue?' }] } }, 62);
+  const result = await f.handle.promise;
+  assert.equal(result.deferredInputs.length, 1);
+  assert.equal(f.responses.some(response => response.id === 62), false);
+  assert.match(result.error, /等待回复超时/);
+});
+
 function fixture(options = {}, behavior = {}) {
   let listener;
   const calls = [], responses = [], events = [];
@@ -132,7 +159,7 @@ test('unknown-phase buffering enforces the existing aggregate response size limi
 test('native plan uses ephemeral thread, CLI model, reasoning and built-in plan instructions', async () => {
   const f = fixture({ bot: { cliType: 'codex', executionMode: 'plan', reasoningEffort: 'high', permissionMode: 'workspace' } });
   await f.ready();
-  assert.deepEqual(f.calls[0].params, { cwd: process.cwd(), ephemeral: true, approvalPolicy: 'on-request', sandbox: 'workspace-write' });
+  assert.deepEqual(f.calls[0].params, { cwd: process.cwd(), ephemeral: true, dynamicTools: [require('../src/main/adapters/questionTool').questionTool], approvalPolicy: 'on-request', sandbox: 'workspace-write' });
   assert.deepEqual(f.calls[1].params.collaborationMode, { mode: 'plan', settings: { model: 'model-native', reasoning_effort: 'high', developer_instructions: null } });
   f.send('item/agentMessage/delta', { itemId: 'message-1', delta: 'Planning.' });
   f.send('item/completed', { item: { type: 'agentMessage', id: 'message-1', text: 'Planning.' } });
@@ -245,7 +272,7 @@ test('native command approvals round trip with session scope and secret input is
 });
 
 test('approval expiration denies and keeps the native turn running; available decisions are enforced', async () => {
-  const f = fixture({ inputTimeoutMs: 15 }); await f.ready();
+  const f = fixture({ approvalTimeoutMs: 15 }); await f.ready();
   f.send('item/commandExecution/requestApproval', { command: 'sensitive', availableDecisions: ['accept', 'decline'] }, 41);
   const request = f.events.find(event => event.type === 'input_request').payload;
   assert.throws(() => f.handle.respondInput(request.requestId, { decision: 'acceptForSession' }), /授权选项无效/);

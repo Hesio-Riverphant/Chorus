@@ -12,6 +12,7 @@ const cliRegistry = require('../cliRegistry');
 const Reasoning = require('../../shared/reasoning');
 const { normalizeSelection } = require('../nativeCapabilities');
 const RoomProfiles = require('../../shared/roomProfiles');
+const { parseMentions } = require('../../shared/mention');
 
 const ROOT = path.join(__dirname, '..', '..', '..'); // project root
 
@@ -232,8 +233,10 @@ class Persistence {
     bot.nativeCapabilities = normalizeSelection((!changedAgent && room.memberProfiles?.[id]?.nativeCapabilities) || this.settings.agentCapabilities?.[bot.cliType]);
     const memberCapabilities = { ...room.memberCapabilities };
     if (changedAgent) delete memberCapabilities[id];
+    const memberRoles = room.memberRoles?.[id] && Object.hasOwn(patch, 'role')
+      ? { ...room.memberRoles, [id]: null } : room.memberRoles;
     bot.cwd = ''; delete bot.ownerRoomId;
-    const saved = this.saveRoom({ ...room, memberCapabilities, memberProfiles: { ...room.memberProfiles, [id]: bot },
+    const saved = this.saveRoom({ ...room, memberRoles, memberCapabilities, memberProfiles: { ...room.memberProfiles, [id]: bot },
       botIds: [...new Set([...room.botIds, id])] }, { localProfileEdit: true });
     return { bot: saved.memberProfiles[id], room: saved };
   }
@@ -489,6 +492,15 @@ class Persistence {
       }
     }
     const edited = next[index];
+    if (text !== selected.text) {
+      delete edited.audienceBotIds;
+      delete edited.targetBotId;
+      delete edited.modeTargetIds;
+      delete edited.roundRun;
+      const room = this.rooms.find(record => record.id === roomId);
+      const mentions = parseMentions(text, this.roomMembers(room));
+      if (mentions.length && !mentions.includes('all')) edited.audienceBotIds = mentions;
+    }
     edited.text = text;
     edited.updatedAt = Date.now();
     // Existing notes remain private and readable, but stale text anchors must
@@ -516,6 +528,7 @@ class Persistence {
       botIds: [...room.botIds] };
     if (room.memberProfiles) saved.memberProfiles = JSON.parse(JSON.stringify(room.memberProfiles));
     if (room.memberCapabilities) saved.memberCapabilities = JSON.parse(JSON.stringify(room.memberCapabilities));
+    if (room.memberRoles) saved.memberRoles = JSON.parse(JSON.stringify(room.memberRoles));
     if (room.memberDisplayOrder) saved.memberDisplayOrder = [...room.memberDisplayOrder];
     delete saved.recovered;
     delete saved.parentRoomId;
@@ -535,6 +548,8 @@ class Persistence {
         .map(([id, profile]) => [botIds.get(id) || id, { ...profile, id: botIds.get(id) || id }]));
       if (saved.memberCapabilities) saved.memberCapabilities = Object.fromEntries(Object.entries(saved.memberCapabilities)
         .map(([id, choice]) => [botIds.get(id) || id, choice]));
+      if (saved.memberRoles) saved.memberRoles = Object.fromEntries(Object.entries(saved.memberRoles)
+        .map(([id, role]) => [botIds.get(id) || id, role]));
       saved.botIds = saved.botIds.map((id) => botIds.get(id));
       saved.moderatorBotId = botIds.get(saved.moderatorBotId) || '';
       if (saved.memberDisplayOrder) saved.memberDisplayOrder = saved.memberDisplayOrder.map((id) => botIds.get(id)).filter(Boolean);
@@ -546,6 +561,8 @@ class Persistence {
       if (botIds.has(copy.authorId)) copy.authorId = botIds.get(copy.authorId);
       if (Array.isArray(copy.mentions)) copy.mentions = copy.mentions.map((id) => botIds.get(id) || id);
       if (Array.isArray(copy.modeTargetIds)) copy.modeTargetIds = copy.modeTargetIds.map(id => botIds.get(id) || id);
+      if (Array.isArray(copy.audienceBotIds)) copy.audienceBotIds = copy.audienceBotIds.map(id => botIds.get(id) || id);
+      if (copy.targetBotId) copy.targetBotId = botIds.get(copy.targetBotId) || copy.targetBotId;
       delete copy.runId;
       for (const field of ['roundId', 'replyToId', 'supersedes', 'supersededBy']) {
         if (copy[field]) {
@@ -671,6 +688,15 @@ class Persistence {
       if (!isRecord(saved.memberCapabilities)) throw new Error(I18n.t('房间扩展配置无效'));
       saved.memberCapabilities = Object.fromEntries(Object.entries(saved.memberCapabilities).map(([id, choice]) => [id, normalizeSelection(choice)]));
     }
+    const clearedRoles = new Set();
+    if (saved.memberRoles !== undefined) {
+      if (!isRecord(saved.memberRoles)) throw new Error(I18n.t('成员配置无效'));
+      saved.memberRoles = Object.fromEntries(Object.entries(saved.memberRoles).flatMap(([id, choice]) => {
+        if (choice === null) { clearedRoles.add(id); return []; }
+        const profile = normalizeBotProfile(choice);
+        return [[id, { role: profile.role, customRole: !!profile.customRole }]];
+      }));
+    }
     if (RoomProfiles.isLocal(saved)) {
       const snapshots = { ...(saved.memberProfiles || {}) };
       const parent = this.rooms.find(item => item.id === saved.parentRoomId);
@@ -715,6 +741,8 @@ class Persistence {
       });
       saved.botIds = [...new Set(saved.botIds)];
       saved.moderatorBotId = remap.get(saved.moderatorBotId) || saved.moderatorBotId;
+      if (saved.memberRoles) saved.memberRoles = Object.fromEntries(Object.entries(saved.memberRoles)
+        .map(([id, role]) => [remap.get(id) || id, role]));
       if (saved.memberDisplayOrder) saved.memberDisplayOrder = [...new Set(saved.memberDisplayOrder
         .map((id) => remap.get(id) || id).filter((id) => saved.botIds.includes(id)))];
       if (nextBots.length === this.bots.length) nextBots = this.bots;
@@ -728,6 +756,12 @@ class Persistence {
     if (!saved.botIds.includes(saved.moderatorBotId)) {
       saved.moderatorBotId = saved.botIds[0] || '';
     }
+    const previousHost = this.rooms[idx]?.moderatorBotId;
+    if (previousHost && previousHost !== saved.moderatorBotId && saved.botIds.includes(previousHost) && !clearedRoles.has(previousHost)) {
+      saved.memberRoles = { ...saved.memberRoles, [previousHost]: { role: '协作者', customRole: false } };
+    }
+    if (saved.memberRoles) saved.memberRoles = Object.fromEntries(Object.entries(saved.memberRoles)
+      .filter(([id]) => saved.botIds.includes(id)));
 
     // The project directory belongs to the parent; all side conversations
     // follow a directory edit in the same atomic room-table update.
@@ -864,6 +898,8 @@ class Persistence {
       .map(([id, profile]) => [remap.get(id) || id, { ...profile, id: remap.get(id) || id }]));
     if (originalRoom.memberCapabilities) room.memberCapabilities = Object.fromEntries(Object.entries(originalRoom.memberCapabilities)
       .map(([id, choice]) => [remap.get(id) || id, choice]));
+    if (originalRoom.memberRoles) room.memberRoles = Object.fromEntries(Object.entries(originalRoom.memberRoles)
+      .map(([id, role]) => [remap.get(id) || id, role]));
     room.botIds = (originalRoom.botIds || []).map(id => remap.get(id) || id).filter(id => botIdSet.has(id) || room.memberProfiles?.[id]);
     room.moderatorBotId = remap.get(originalRoom.moderatorBotId) || originalRoom.moderatorBotId;
     if (originalRoom.memberDisplayOrder) room.memberDisplayOrder = originalRoom.memberDisplayOrder
@@ -876,6 +912,8 @@ class Persistence {
       if (message.authorType === 'bot' && remap.has(message.authorId)) restored.authorId = remap.get(message.authorId);
       if (Array.isArray(message.mentions)) restored.mentions = message.mentions.map(id => remap.get(id) || id);
       if (Array.isArray(message.modeTargetIds)) restored.modeTargetIds = message.modeTargetIds.map(id => remap.get(id) || id);
+      if (Array.isArray(message.audienceBotIds)) restored.audienceBotIds = message.audienceBotIds.map(id => remap.get(id) || id);
+      if (message.targetBotId) restored.targetBotId = remap.get(message.targetBotId) || message.targetBotId;
       return restored;
     };
     const restored = msgs.map(restoreMessage);

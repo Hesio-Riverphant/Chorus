@@ -11,7 +11,9 @@ const officialIds = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'g
 function assertOfficialFallback(result) {
   assert.deepEqual(result.models.filter((m) => m.source === 'candidate').map((m) => m.id), officialIds);
   assert.ok(result.models.every((m) => m.source !== 'codex-cache'));
+  assert.ok(result.models.every((m) => !/候选|Candidate/.test(m.label)));
   assert.match(result.notice, /测试连接/);
+  assert.match(result.notice, /不代表当前提供商已授权/);
 }
 
 function fixture(t, content) {

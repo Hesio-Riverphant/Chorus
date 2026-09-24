@@ -5,6 +5,40 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { DEFAULTS } = require('../src/shared/constants');
 
+test('explicit human recipients contain relays and later history delivery in every speak mode', async () => {
+  for (const mode of ['parallel', 'sequential', 'host']) {
+    const f = fixture({ mode, runBot: () => complete({ text: 'Private result @Bot1 please reply' }) });
+    await f.orchestrator.handleHuman('r1', '@Bot0 private instruction');
+    assert.deepEqual(f.calls.map(call => call.bot.id), ['b0']);
+    assert.deepEqual(f.messages.r1.find(message => message.authorType === 'human').audienceBotIds, ['b0']);
+    await f.orchestrator.handleHuman('r1', '@Bot1 public follow-up');
+    assert.equal(f.calls.length, 2);
+    assert.doesNotMatch(f.calls.at(-1).prompt, /private instruction|Private result/);
+  }
+});
+
+test('mention continuation supplies original failed work even when normal history is disabled', async () => {
+  const f = fixture({ settings: { catchupMessages: 0 }, runBot: (_args, index) => complete(index === 1 ? {
+    text: 'Wrote first file', error: 'Unexpected authentication failure: sign in again',
+  } : {}) });
+  await f.orchestrator.handleHuman('r1', '@Bot0 original task');
+  await f.orchestrator.handleHuman('r1', '@Bot0 continue');
+  assert.match(f.calls.at(-1).prompt, /original task/);
+  assert.match(f.calls.at(-1).prompt, /Wrote first file/);
+  assert.match(f.calls.at(-1).prompt, /Unexpected authentication failure/);
+  assert.match(f.calls.at(-1).prompt, /先核对已有副作用/);
+});
+
+test('public host relay can address a failed member with its incomplete work', async () => {
+  const f = fixture({ settings: { maxAutoTurns: 1 }, runBot: ({ bot }, index) => complete(index === 1
+    ? { text: 'unfinished operation', error: 'Provider disconnected unexpectedly' }
+    : bot.id === 'b1' ? { text: '@Bot0 continue after checking progress' } : {}) });
+  await f.orchestrator.handleHuman('r1', '@all perform task');
+  assert.deepEqual(f.calls.map(call => call.bot.id), ['b0', 'b1', 'b0']);
+  assert.match(f.calls.at(-1).prompt, /unfinished operation/);
+  assert.match(f.calls.at(-1).prompt, /Provider disconnected unexpectedly/);
+});
+
 function fixture({ bots = 2, settings = {}, mode = 'sequential', runBot, capabilities } = {}) {
   const members = Array.from({ length: bots }, (_, i) => ({
     id: `b${i}`, name: `Bot${i}`, cliType: 'codex', enabled: true,
@@ -184,12 +218,12 @@ test('app-only turns receive room context without saving or resuming native sess
   assert.equal(f.calls[4].priorSessionId, null);
 });
 
-test('returning member receives messages missed during other human turns', async () => {
+test('returning member does not receive another recipient private history', async () => {
   const f = fixture();
   await f.orchestrator.handleHuman('r1', '@Bot0 first');
   await f.orchestrator.handleHuman('r1', '@Bot1 missed-detail');
   await f.orchestrator.handleHuman('r1', '@Bot0 return');
-  assert.match(f.calls[2].prompt, /missed-detail/);
+  assert.doesNotMatch(f.calls[2].prompt, /missed-detail/);
 });
 
 test('failed call usage counts while call-count guard still stops subsequent dispatch', async () => {
@@ -278,13 +312,13 @@ test('parallel dispatch respects concurrency and total call caps', async () => {
   assert.equal(f.calls.length, 4);
 });
 
-test('retry is a new run, retries only eligible messages, and relays success', async () => {
+test('retry is a new run and preserves explicit recipient isolation', async () => {
   const f = fixture({ runBot: (args, n) => complete(n === 1 ? { error: 'failed' }
     : { text: n === 2 ? '@Bot1 continue' : 'done' }) });
   await f.orchestrator.handleHuman('r1', '@Bot0 start');
   const failed = f.messages.r1.find((m) => m.authorType === 'bot');
   await f.orchestrator.retry('r1', failed.id);
-  assert.equal(f.calls.length, 3);
+  assert.equal(f.calls.length, 2);
   assert.ok(failed.supersededBy);
   await assert.rejects(f.orchestrator.retry('r1', failed.id), /只能重试/);
   assert.equal(f.orchestrator.isBusy(), false);
@@ -302,7 +336,8 @@ test('disabled explicit target does not fall back to moderator or join relay', a
 test('per-edge cap ends a bot ping-pong while preserving successful turns', async () => {
   const f = fixture({ settings: { maxAutoTurns: 100 }, runBot: ({ bot }) =>
     complete({ text: bot.id === 'b0' ? '@Bot1 continue' : '@Bot0 continue' }) });
-  await f.orchestrator.handleHuman('r1', '@Bot0 start');
+  f.rooms[0].routingMode = 'moderator';
+  await f.orchestrator.handleHuman('r1', 'start');
   assert.equal(f.calls.length, 5);
   assert.ok(f.messages.r1.some((m) => m.text.includes('超过单边上限 2 次')));
 });

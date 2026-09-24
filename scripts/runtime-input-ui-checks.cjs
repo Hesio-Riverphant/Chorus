@@ -24,6 +24,13 @@ module.exports = async ({ win, persistence, check }) => {
       input.value = 'My own answer'; input.dispatchEvent(new Event('input'));
       await form.onsubmit({ preventDefault() {} }); return selected;
     }, record) && replies[1]?.answers.q.answers[0] === 'My own answer');
+    check('native option-only questions cannot suggest unsupported free text and send the actual choice', await page(async record => {
+      NativeInputUI.event({ ...record, type: undefined, requestId: 'option-fixture', questions: [{ id: 'q', question: 'Choose only', optionOnly: true, options: [{ label: 'Continue' }, { label: 'Skip' }] }] });
+      const form = document.querySelector('.native-question'); const input = form.querySelector('input');
+      const readonly = input.readOnly && input.placeholder === '请选择提供的选项';
+      form.querySelectorAll('.field button')[1].click();
+      await form.onsubmit({ preventDefault() {} }); return readonly;
+    }, record) && replies[2]?.answers.q.answers[0] === 'Skip');
   } finally {
     orchestrator.runs.delete(room.id); orchestrator.inputHandles.delete(record.messageId);
   }

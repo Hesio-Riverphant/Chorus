@@ -75,6 +75,9 @@ jobs:
           for task in test:ui test:rooms test:capabilities test:workbench test:i18n package:release; do
             xvfb-run --auto-servernum npm run "$task"
           done
+      - name: Windows installed startup and scoped removal
+        if: runner.os == 'Windows'
+        run: node scripts/verify-windows-install.js
       - name: Ubuntu archive, install and uninstall checks
         if: runner.os == 'Linux'
         run: xvfb-run --auto-servernum bash scripts/verify-linux-release.sh

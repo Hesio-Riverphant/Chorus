@@ -2,16 +2,19 @@
 const I18n = require('../../shared/i18n');
 
 const { spawn } = require('node:child_process');
+const { randomUUID } = require('node:crypto');
 const { terminateTree } = require('./processTree');
 const { StringDecoder } = require('node:string_decoder');
 const { resolveExecutable } = require('./resolveExecutable');
 const { locateCliExecutable } = require('../cliDiscovery');
 const { safeText, emitActivity } = require('./activities');
+const { validateAnswers } = require('./inputAnswers');
+const { createDiagnostics } = require('./diagnostics');
 
 // Official Kimi ACP configOptions contract. Session overrides never rewrite
 // config.toml or credentials. Older releases expose only on/off; reject a
-// missing effort before prompting because 0.28.1 treats unknown levels as off.
-function runKimiAcp({ bot, prompt, workspace, cliSettings = {}, noBytesTimeoutMs = 90000,
+// unsupported selected effort before prompting because 0.28.1 treats unknown levels as off.
+function runKimiAcp({ bot, prompt, workspace, cliSettings = {}, noBytesTimeoutMs = 90000, inputTimeoutMs = 60000,
   spawnProcess = spawn, executable: suppliedExecutable }) {
   if (bot.permissionMode !== 'full') throw new Error(I18n.t('Kimi 会话需显式选择全权限'));
   const executable = suppliedExecutable || resolveExecutable(locateCliExecutable('kimi', cliSettings) || 'kimi');
@@ -20,7 +23,7 @@ function runKimiAcp({ bot, prompt, workspace, cliSettings = {}, noBytesTimeoutMs
     env: { ...process.env, KIMI_DISABLE_TELEMETRY: '1', KIMI_CODE_NO_AUTO_UPDATE: '1' },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
-  const pending = new Map(), listeners = new Set(), acc = {};
+  const pending = new Map(), listeners = new Set(), acc = {}, inputs = new Map(), deferredInputs = [], diagnostics = createDiagnostics();
   let nextId = 0, sessionId, text = '', thought = '', thoughtId = 0, buffer = '', bytes = 0;
   let aborted = false, closed = false, processExited = false, failure = null, timer;
   let settled = false;
@@ -45,7 +48,53 @@ function runKimiAcp({ bot, prompt, workspace, cliSettings = {}, noBytesTimeoutMs
   }
   function pulse() {
     clearTimeout(timer);
+    if (inputs.size || closed) return;
     timer = setTimeout(() => { fail(I18n.t('Kimi 等待响应超时')); void close(); }, Math.max(1000, noBytesTimeoutMs));
+  }
+  function removeInput(requestId, reason) {
+    const input = inputs.get(requestId);
+    if (!input) return;
+    clearTimeout(input.timer); inputs.delete(requestId);
+    emit('input_resolved', { requestId, ...(reason ? { reason } : {}) });
+    pulse();
+  }
+  function permissionRequest(message) {
+    const params = message.params, tool = params?.toolCall, options = params?.options;
+    const cancel = () => write({ id: message.id, result: { outcome: { outcome: 'cancelled' } } });
+    // Only the native AskUserQuestion bridge is interactive in full/yolo mode.
+    // An unexpected ordinary permission request never grants additional access.
+    if (params?.sessionId !== sessionId || tool?.title !== 'AskUserQuestion') { cancel(); return; }
+    if ([...inputs.values()].some(input => input.nativeId === message.id)) return;
+    const question = Array.isArray(tool.content) ? tool.content
+      .filter(block => block.type === 'content' && block.content?.type === 'text')
+      .map(block => block.content.text).join('\n') : '';
+    if (inputs.size >= 8 || !question.trim() || question.length > 3000 || tool.isSecret ||
+        !Array.isArray(options) || !options.length || options.length > 20 ||
+        options.some(option => !option || typeof option.optionId !== 'string' || !option.optionId || option.optionId.length > 300 ||
+          typeof option.name !== 'string' || !option.name.trim() || option.name.length > 200 ||
+          !['allow_once', 'reject_once'].includes(option.kind))) { cancel(); return; }
+    const labels = options.map(option => safeText(option.name, 200));
+    if (new Set(labels).size !== labels.length || new Set(options.map(option => option.optionId)).size !== options.length) { cancel(); return; }
+    const requestId = randomUUID();
+    const questions = [{ id: 'q0', question: safeText(question, 3000), optionOnly: true, multiSelect: false,
+      options: labels.map(label => ({ label })) }];
+    const input = { nativeId: message.id, questions, optionIds: options.map(option => option.optionId) };
+    inputs.set(requestId, input); pulse();
+    input.timer = setTimeout(() => {
+      if (closed || !inputs.has(requestId)) return;
+      fail(I18n.t('等待回复超时；问题已保留，回答后可继续')); void close();
+    }, inputTimeoutMs);
+    emit('input_request', { requestId, questions, isBlocking: true, expiresAt: Date.now() + inputTimeoutMs });
+  }
+  function respondInput(requestId, answers) {
+    const input = inputs.get(requestId);
+    if (closed || aborted || settled || !input) throw new Error(I18n.t('该提问已结束，请重新发送消息'));
+    const values = validateAnswers(input.questions, answers).q0.answers;
+    const index = values.length === 1 ? input.questions[0].options.findIndex(option => option.label === values[0]) : -1;
+    if (index < 0) throw new Error(I18n.t('回答格式无效'));
+    write({ id: input.nativeId, result: { outcome: { outcome: 'selected', optionId: input.optionIds[index] } } });
+    removeInput(requestId);
+    return { ok: true };
   }
   function finishThought() {
     if (!thought) return;
@@ -62,10 +111,8 @@ function runKimiAcp({ bot, prompt, workspace, cliSettings = {}, noBytesTimeoutMs
       return;
     }
     if (message.id != null && message.method) {
-      // Auto mode was explicitly selected. Unexpected interactive requests are
-      // rejected, including questions, rather than silently granting access.
       if (message.method === 'session/request_permission') {
-        write({ id: message.id, result: { outcome: { outcome: 'cancelled' } } });
+        permissionRequest(message);
       } else write({ id: message.id, error: { code: -32601, message: 'Client capability unavailable' } });
       return;
     }
@@ -100,12 +147,12 @@ function runKimiAcp({ bot, prompt, workspace, cliSettings = {}, noBytesTimeoutMs
     if (bytes > 8 * 1024 * 1024) { fail(I18n.t('Kimi 输出超过大小上限')); void close(); return; }
     buffer += decoder.write(chunk);
     let newline;
-    while ((newline = buffer.indexOf('\n')) >= 0) {
+    while (!closed && (newline = buffer.indexOf('\n')) >= 0) {
       const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
       try { receive(JSON.parse(line.replace(/^\uFEFF/, ''))); } catch { fail(I18n.t('Kimi 返回了无效协议数据')); void close(); }
     }
   });
-  child.stderr.on('data', () => {});
+  child.stderr.on('data', chunk => { if (!closed) diagnostics.push(chunk); });
   child.stdin.on('error', () => fail(I18n.t('Kimi 输入通道已关闭')));
   child.on('error', () => fail(I18n.t('无法启动 Kimi Code')));
   child.on('close', code => {
@@ -124,8 +171,13 @@ function runKimiAcp({ bot, prompt, workspace, cliSettings = {}, noBytesTimeoutMs
     if (closing) return closing;
     closing = (async () => {
       clearTimeout(timer);
-      if (closed) { child.stdin.destroy(); return; }
-      closed = true; fail(I18n.t('Kimi 连接已关闭'));
+      const alreadyClosed = closed; closed = true;
+      for (const [requestId, input] of inputs) {
+        if (!aborted) deferredInputs.push({ requestId, questions: input.questions, status: 'deferred' });
+        removeInput(requestId, aborted ? 'cancelled' : 'deferred');
+      }
+      if (alreadyClosed) { child.stdin.destroy(); return; }
+      fail(I18n.t('Kimi 连接已关闭'));
       const cleanup = await terminateTree(child.pid, { spawnProcess, killProcess: (pid, signal) => {
         if (pid === child.pid) child.kill(signal); else process.kill(pid, signal);
       } });
@@ -143,28 +195,31 @@ function runKimiAcp({ bot, prompt, workspace, cliSettings = {}, noBytesTimeoutMs
       sessionId = session?.sessionId;
       if (typeof sessionId !== 'string' || !sessionId) throw new Error(I18n.t('Kimi 未创建会话'));
       if (bot.model) session = await request('session/set_config_option', { sessionId, configId: 'model', value: bot.model });
-      const option = session.configOptions?.find(item => item.id === 'thinking');
-      const values = (option?.options || []).flatMap(item => item.options || [item]).map(item => item.value);
-      if (!values.includes(bot.reasoningEffort)) throw new Error(I18n.t('当前 Kimi CLI 未提供所选推理档位；请更新原生 Kimi Code，或选择其支持的开启/关闭/默认'));
-      const configured = await request('session/set_config_option', { sessionId, configId: 'thinking', value: bot.reasoningEffort });
-      if (configured?.configOptions?.find(item => item.id === 'thinking')?.currentValue !== bot.reasoningEffort) throw new Error(I18n.t('Kimi 未应用所选推理程度'));
-      await request('session/set_config_option', { sessionId, configId: 'mode', value: 'auto' });
+      if (bot.reasoningEffort) {
+        const option = session.configOptions?.find(item => item.id === 'thinking');
+        const values = (option?.options || []).flatMap(item => item.options || [item]).map(item => item.value);
+        if (!values.includes(bot.reasoningEffort)) throw new Error(I18n.t('当前 Kimi CLI 未提供所选推理档位；请更新原生 Kimi Code，或选择其支持的开启/关闭/默认'));
+        const configured = await request('session/set_config_option', { sessionId, configId: 'thinking', value: bot.reasoningEffort });
+        if (configured?.configOptions?.find(item => item.id === 'thinking')?.currentValue !== bot.reasoningEffort) throw new Error(I18n.t('Kimi 未应用所选推理程度'));
+      }
+      await request('session/set_config_option', { sessionId, configId: 'mode', value: 'yolo' });
       const outcome = await request('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }] });
       finishThought();
       if (aborted) throw new Error(I18n.t('Kimi 会话已取消'));
       if (failure) throw new Error(failure);
+      if (inputs.size) throw new Error(I18n.t('Kimi 未完成本轮回复'));
       if (outcome?.stopReason !== 'end_turn') throw new Error(outcome?.stopReason === 'cancelled' ? I18n.t('Kimi 会话已取消') : I18n.t('Kimi 未完成本轮回复'));
       if (!text.trim()) throw new Error(I18n.t('Kimi 未返回最终回复'));
       emit('final_answer', true);
       result = { text, activities: acc.activities || [], aborted: false, error: null };
     } catch (error) {
-      const detail = aborted ? null : safeText(error.message);
+      const detail = aborted ? null : safeText([error.message, diagnostics.text()].filter(Boolean).join('\n'), 20000);
       if (detail) emit('error', detail);
       result = { text, activities: acc.activities || [], aborted, error: detail };
     } finally { settled = true; await close(); }
-    return { ...result, ...(acc.cleanupWarning ? { cleanupWarning: acc.cleanupWarning } : {}) };
+    return { ...result, ...(deferredInputs.length ? { deferredInputs } : {}), ...(acc.cleanupWarning ? { cleanupWarning: acc.cleanupWarning } : {}) };
   })();
-  return { promise, onEvent(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+  return { promise, respondInput, onEvent(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     async cancel() { if (settled) return close(); aborted = true; if (sessionId && !closed) { try { write({ method: 'session/cancel', params: { sessionId } }); } catch {} } await close(); } };
 }
 

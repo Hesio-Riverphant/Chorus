@@ -1,6 +1,6 @@
 {
   "name": "chorus",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "A local desktop workspace for conversations between native coding agents.",
   "main": "src/main/main.js",
   "scripts": {

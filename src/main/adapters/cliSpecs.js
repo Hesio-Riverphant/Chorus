@@ -188,7 +188,11 @@ function parseClaude(line, emit, acc) {
 
   if (o.type === 'result') {
     acc.sessionId = o.session_id || acc.sessionId;
-    if (o.is_error) emit('error', o.error || o.result || o.subtype || 'Claude Code error');
+    if (o.is_error || /^error(?:_|$)/.test(o.subtype || '')) {
+      const errors = [o.error, ...(Array.isArray(o.errors) ? o.errors : []), o.result]
+        .map(value => typeof value === 'string' ? value : value?.message).filter(Boolean);
+      emit('error', safeText(errors.join('\n') || o.subtype || 'Claude Code error'));
+    }
 
     const ru = Object.fromEntries(Object.entries(o.usage || {}).filter(([, value]) => tokenCount(value) !== null));
     // modelUsage is cumulative by model; only its window is usable here.

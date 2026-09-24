@@ -16,8 +16,9 @@
         ? bot.nativeCapabilities : settings.agentCapabilities?.[bot.cliType]) || inherit();
       // Host assignment belongs to this room, including side-chat snapshots.
       // Project it into the profile consumed by UI and prompts, never global bots.
-      const role = id === room.moderatorBotId ? '主持人' : bot.role === '主持人' ? '协作者' : bot.role;
-      return { ...bot, role, customRole: role !== bot.role || id === room.moderatorBotId ? false : bot.customRole, nativeCapabilities };
+      const profile = room.memberRoles?.[id] || bot;
+      const role = id === room.moderatorBotId ? '主持人' : profile.role === '主持人' ? '协作者' : profile.role;
+      return { ...bot, role, customRole: role !== profile.role || id === room.moderatorBotId ? false : profile.customRole, nativeCapabilities };
     }).filter(Boolean);
   }
   return { members, isLocal };

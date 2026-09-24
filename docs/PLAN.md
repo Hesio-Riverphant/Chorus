@@ -2,6 +2,15 @@
 
 Chorus prioritizes durable local conversations, predictable configuration and observable native Agent execution.
 
+## 0.6.1
+
+- Real local Codex, Claude and Kimi question/answer/model continuation; sixty-second deferred questions.
+- Explicit recipient isolation across relay, history and edited-message recovery.
+- Native error details, recovery task context, and specific dispatch-limit reasons.
+- Transparent CLI avatars, room-scoped host demotion and normal shared-role editing.
+- Scoped Windows complete uninstall with shared-data confirmation and preservation of unrecognized content.
+- Remaining: print-only Agent interaction bridges, long-duration soak, physical Windows 10 and Linux user-data uninstall.
+
 ## 0.6.0
 
 - Native Codex and Claude authorization/question cards, bounded waiting and explicit deferred-question continuation.

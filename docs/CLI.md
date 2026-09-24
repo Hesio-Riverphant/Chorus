@@ -6,9 +6,9 @@ Chorus runs locally installed command-line agents. Install and sign in to each a
 
 | Agent | Noninteractive transport | Permission mapping | Validation |
 | --- | --- | --- | --- |
-| Claude Code | Bidirectional stream-json, `--permission-prompts host --permission-prompt-tool stdio` | Native read-only tool allowlist, accept-edits, or bypass-permissions; host approval/question cards | Local initialize handshake, official SDK contract, protocol and application regression tests |
-| Codex | Native app-server JSON-RPC | Read-only, workspace-write, or unrestricted | Local CLI and application regression tests |
-| Kimi Code | Print JSONL by default; ACP when selecting thinking | Explicit full access required; ACP session overrides leave global configuration intact | Local 0.28.1 model discovery, model connection, and offline ACP settings handshake; complete ACP model/tool turn not yet verified |
+| Claude Code | Bidirectional stream-json, `--permission-prompts host --permission-prompt-tool stdio` | Native read-only tool allowlist, accept-edits, or bypass-permissions; host approval/question cards | Real local question/answer/model continuation, official SDK contract and application regression tests |
+| Codex | Native app-server JSON-RPC | Read-only, workspace-write, or unrestricted; real app-hosted question tool | Real local question/answer/model continuation and application regression tests |
+| Kimi Code | Bidirectional ACP | Explicit full access required; ACP session overrides leave global configuration intact | Local 0.28.1 real question/answer/model continuation, model discovery and ACP settings checks |
 | CodeBuddy Code | `--print --output-format stream-json` | Read-only tools, accept-edits, or bypass-permissions | Official protocol and offline tests; local account execution not verified |
 | Gemini CLI | Piped input, `--output-format stream-json` | Native plan, auto-edit, or YOLO | Official source and offline process/parser tests; local account execution not verified |
 | Qwen Code | `--prompt --output-format stream-json` | Native plan, auto-edit, or YOLO | Official source and offline process/parser tests; local account execution not verified |
@@ -25,6 +25,8 @@ Native plan/auto-edit modes are agent policies, not OS filesystem sandboxes. Age
 Gemini and Qwen report token counts when their structured result supplies them. Plain-text transports do not provide token measurements. Missing measurements remain unavailable.
 
 Cursor emits complete assistant messages and tool events; its print protocol suppresses thinking. Droid currently returns its final structured result in Chorus; its separate JSON-RPC tool/progress transport is not integrated. Both preserve native account and extension configuration. Their local account execution has not yet been verified.
+
+Question cards use Codex dynamic tools, Claude AskUserQuestion, and Kimi native ACP single-choice requests. Kimi 0.28.1 provides one question and supplied options only; free-text replies are not exposed by its ACP bridge. Other current print transports use text questions; structured interactive replies are not implemented for them. Questions expire after 60 seconds and remain answerable as a new targeted invocation. No native global configuration is changed.
 
 ## Model selection and thinking
 

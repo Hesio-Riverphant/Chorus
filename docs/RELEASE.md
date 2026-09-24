@@ -1,5 +1,9 @@
 # Chorus release workflow / 发布流程
 
+## 0.6.1 变更
+
+Codex、Claude Code 和 Kimi 的真实提问工具完成问答往返验证；问题等待一分钟后保留待答，之后可显式续接。点名消息限定接收成员，错误与部分输出进入续接上下文，派发停止显示具体原因。修正房间主持角色、头像背景和模型选项文字。Windows 卸载入口随安装器和 ZIP 提供，按已验证清单删除；未知内容会中止并要求检查，升级保留数据。其他 CLI 的交互支持、个人硬件和长期负载仍需分别验证。
+
 ## 0.6.0 变更
 
 原生 Codex/Claude 授权与提问卡片、超时问题显式续接、仅阻止新派发的用量软预算、进程终止/Unicode 流边界修复、房间主持角色同步和 CLI 头像。Windows 包内附卸载启动器；独立卸载 zip 继续提供。`npm run test:stress` 覆盖真实受控进程的跨房间停止、失败重试和终止竞态，双端 CI 执行。各 Agent 真实账号授权、长期负载与 Windows 10 实机验收仍需单独验证。
@@ -26,7 +30,7 @@ npm run check:release
 npm run package:release
 ```
 
-- `npm run package:win`：Windows x64 安装器、便携 zip 与独立卸载启动包。卸载启动包只调用当前用户登记的 Chorus 卸载程序，保留聊天数据。
+- `npm run package:win`：Windows x64 安装器与便携 zip，二者均附带针对自身目录的卸载入口。完整卸载会展示当前应用和共享数据的删除范围，确认后按清单删除；未知文件、链接和项目目录重叠会中止。
 - `npm run package:linux -- --homepage <真实项目网址>`：Linux x64 deb 与 zip，需要 Linux 本机构建环境。公开仓库后也可在 package.json 设置 homepage；CI 使用当前仓库地址。
 - `npm run package:desktop`：生成可逐文件核验的便携运行目录。
 - `node scripts/package-desktop.js --source --strict`：生成公开源码候选目录。
@@ -39,7 +43,7 @@ Ubuntu 24.04 CI 为当前构建目录设置限定路径的 AppArmor userns 授�
 
 安装器和 zip 均从经过发布检查的应用目录生成，保留 Electron、Chromium、终端组件许可。`LICENSES.chromium.html` 是 Chromium 第三方许可。
 
-Windows 使用 `Chorus.exe`；zip 必须完整解压。成功构建后 `dist/CURRENT-RELEASE.json` 指向最新完整候选，失败候选不会更新此入口。用户数据路径保持 Windows `%APPDATA%/agent-room`、Linux `${XDG_CONFIG_HOME:-~/.config}/agent-room`。安装和升级不迁移聊天数据；退出应用后备份整个数据目录。卸载程序保留聊天数据。
+Windows 使用 `Chorus.exe`；zip 必须完整解压。成功构建后 `dist/CURRENT-RELEASE.json` 指向最新完整候选，失败候选不会更新此入口。用户数据路径保持 Windows `%APPDATA%/agent-room`、Linux `${XDG_CONFIG_HOME:-~/.config}/agent-room`。安装和升级不迁移聊天数据；退出应用后备份整个数据目录。Windows 完整卸载确认后删除共享聊天数据；升级保留数据。Linux 系统包卸载保留用户数据。
 
 源码发行范围是 `src/`、`scripts/`、锁定包清单、Git 忽略规则、许可、README、CI，以及公开架构/计划/参考/发布文档。运行数据、原生配置、凭据、日志和开发交接不进入发行文件。
 
@@ -63,6 +67,6 @@ Build on the target x64 platform with Node.js 24 and locked dependencies. Run th
 
 Windows 11 has local validation; Windows and Ubuntu 24.04 runners execute the same UI and packaged-startup checks. Ubuntu additionally verifies ZIP sandbox setup, Debian installation, normal-user startup and removal. The ZIP needs the sandbox setup documented in README; the Debian package installs a path-scoped AppArmor profile. Individual desktop hardware, accounts and long-running use remain separate acceptance tasks. See actual Actions results for each revision.
 
-Packages preserve the existing `agent-room` user-data directory and bundled third-party licenses. Exit the application before backing up all data. Installer removal retains user data. Builds are unsigned.
+Packages preserve the existing `agent-room` user-data directory and bundled third-party licenses. Exit the application before backing up all data. Windows complete uninstall removes validated shared data after explicit confirmation; upgrades preserve it. Linux package removal retains user data. Builds are unsigned.
 
 Curated source and application inputs exclude runtime data, credentials, native Agent configurations and development handoffs. Source audits, file hashes and isolated packaged startup verify different boundaries. The packaged smoke test starts the real renderer/IPC/terminal using temporary synthetic data; it does not validate every Agent or model. Publishing requires a separate review of Git-visible files and repository history.

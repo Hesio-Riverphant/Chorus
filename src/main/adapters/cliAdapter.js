@@ -65,9 +65,7 @@ function runKimiBot(options) {
     try {
       const model = await require('../kimiNative').resolveKimiModel(options.bot.model, options.cliSettings, controller.signal);
       if (controller.signal.aborted) return { text: '', error: null, aborted: true };
-      handle = options.bot.reasoningEffort
-        ? require('./kimiAcp').runKimiAcp({ ...options, bot: { ...options.bot, model } })
-        : runCliBot({ ...options, bot: { ...options.bot, model } });
+      handle = require('./kimiAcp').runKimiAcp({ ...options, bot: { ...options.bot, model } });
       handle.onEvent((type, data) => { for (const listener of listeners) { try { listener(type, data); } catch { /* isolate listeners */ } } });
       return await handle.promise;
     } catch (error) {
@@ -77,6 +75,10 @@ function runKimiBot(options) {
     }
   })();
   return { promise, onEvent(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    respondInput(requestId, answers) {
+      if (controller.signal.aborted || !handle?.respondInput) throw new Error(I18n.t('该提问已结束，请重新发送消息'));
+      return handle.respondInput(requestId, answers);
+    },
     async cancel() { controller.abort(); await handle?.cancel(); } };
 }
 

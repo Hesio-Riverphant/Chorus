@@ -31,6 +31,125 @@ function fixture(t) {
   };
 }
 
+test('edited private recipients remain stable after a member rename without regeneration', async t => {
+  const f = fixture(t), store = await f.open(), room = store.rooms[0], [a, b] = store.bots;
+  store.addMessage(room.id, { id: 'edit-private', roomId: room.id, authorType: 'human', text: `@${a.name} old`, status: 'done', audienceBotIds: [a.id], targetBotId: a.id });
+  store.rewindRoom(room.id, 'edit-private', `@${b.name} new private content`);
+  store.saveBot({ ...b, name: 'Renamed member' });
+  const reopened = await f.open();
+  const human = reopened.getMessage(room.id, 'edit-private');
+  assert.deepEqual(human.audienceBotIds, [b.id]);
+  const { selectTranscript } = require('../src/main/orchestrator/transcript');
+  assert.equal(selectTranscript([human], a, reopened.bots).messages.length, 0);
+  assert.equal(selectTranscript([human], reopened.bots.find(bot=>bot.id===b.id), reopened.bots).messages.length, 1);
+});
+
+test('replacing an executor host persists collaborator only in that room and its later snapshots', async (t) => {
+  const f = fixture(t), store = await f.open();
+  const [first, second] = store.bots;
+  store.saveBot({ ...first, role: '执行者', customRole: false, persona: 'Keep these instructions' });
+  const original = store.saveRoom({ ...store.rooms[0], botIds: [first.id, second.id], moderatorBotId: first.id });
+  const other = store.saveRoom({ name: 'Other role room', botIds: original.botIds, moderatorBotId: second.id });
+  const side = store.createSideChat(original.id);
+  const changed = store.saveRoom({ ...original, moderatorBotId: second.id });
+  assert.equal(store.roomMembers(changed).find(bot => bot.id === first.id).role, '协作者');
+  assert.equal(store.roomMembers(changed).find(bot => bot.id === first.id).customRole, false);
+  assert.equal(store.roomMembers(changed).find(bot => bot.id === first.id).persona, 'Keep these instructions');
+  assert.equal(store.bots.find(bot => bot.id === first.id).role, '执行者');
+  assert.equal(store.roomMembers(other).find(bot => bot.id === first.id).role, '执行者');
+  assert.equal(store.roomMembers(side).find(bot => bot.id === first.id).role, '主持人');
+  const reopened = await f.open();
+  const persisted = reopened.rooms.find(room => room.id === original.id);
+  assert.equal(reopened.roomMembers(persisted).find(bot => bot.id === first.id).role, '协作者');
+  const newSide = reopened.createSideChat(persisted.id);
+  assert.equal(reopened.roomMembers(newSide).find(bot => bot.id === first.id).role, '协作者');
+  reopened.saveBot({ ...reopened.bots.find(bot => bot.id === first.id), role: '审查者' });
+  const edited = reopened.saveRoom({ ...persisted, memberRoles: { ...persisted.memberRoles, [first.id]: null } });
+  assert.equal(reopened.roomMembers(edited).find(bot => bot.id === first.id).role, '审查者');
+  assert.equal(reopened.roomMembers(newSide).find(bot => bot.id === first.id).role, '协作者');
+  const sideEdit = reopened.saveRoomMember(newSide.id, { id: first.id, role: '研究者' });
+  assert.equal(reopened.roomMembers(sideEdit.room).find(bot => bot.id === first.id).role, '研究者');
+  assert.equal(reopened.roomMembers(edited).find(bot => bot.id === first.id).role, '审查者');
+  reopened.addMessage(edited.id, { id: 'role-fork', roomId: edited.id, status: 'done', text: 'checkpoint' });
+  const branch = reopened.forkRoomAt(edited.id, 'role-fork');
+  assert.equal(reopened.roomMembers(branch).find(bot => bot.id === first.id).role, '审查者');
+  assert.throws(() => reopened.saveRoom({ ...edited, memberRoles: { [first.id]: { role: 123 } } }), /角色/);
+});
+
+test('member editor preserves explicit shared roles and isolates host checkbox demotions', async (t) => {
+  const vm = require('node:vm');
+  const code = fs.readFileSync(path.join(__dirname, '../src/renderer/app.js'), 'utf8');
+  for (const local of [false, true]) {
+    const f = fixture(t), store = await f.open(), [first, second] = store.bots;
+    store.saveBot({ ...first, role: '执行者' });
+    const parent = store.saveRoom({ ...store.rooms[0], botIds: [first.id, second.id], moderatorBotId: first.id });
+    const other = store.saveRoom({ name: 'Another shared room', botIds: [first.id, second.id], moderatorBotId: second.id });
+    const room = local ? store.createSideChat(parent.id) : parent;
+    const fields = new Map();
+    const context = { botSaving: false, botEditVersion: 1, RoomProfiles: require('../src/shared/roomProfiles'),
+      RoomUI: { ownsMembers: () => false },
+      state: { rooms: structuredClone(store.rooms), bots: structuredClone(store.bots), editingBotRoomId: room.id, currentRoomId: room.id },
+      $: selector => { if (!fields.has(selector)) fields.set(selector, {}); return fields.get(selector); },
+      roomMembers: item => store.roomMembers(item),
+      window: { api: { saveBot: async payload => store.saveBot(payload),
+        saveRoomMember: async (id, payload) => store.saveRoomMember(id, payload),
+        saveRoom: async payload => store.saveRoom(payload) } },
+      I18n: { t: text => text, write: (node, render) => { node.textContent = render(); } },
+      hideModal() {}, renderBots() {}, renderTopbar() {}, renderRooms() {}, renderBotManagement() {}, SideChatUI: { refresh() {} },
+    };
+    vm.createContext(context);
+    vm.runInContext(code.slice(code.indexOf('async function saveBot()'), code.indexOf('\nasync function deleteBot()')), context);
+    const save = async (id, role, moderator, edited = false) => {
+      const profile = store.roomMembers(store.rooms.find(item => item.id === room.id)).find(bot => bot.id === id);
+      context.state.editingBotId = id; context.state.botRoleEdited = edited;
+      context.$('#f_name').value = profile.name; context.$('#f_moderator').checked = moderator;
+      context.botFormPayload = () => ({ ...profile, role, customRole: false });
+      await context.saveBot();
+      assert.equal(context.$('#f_error').hidden, true, context.$('#f_error').textContent);
+    };
+    await save(second.id, '主持人', true);
+    assert.equal(store.roomMembers(store.rooms.find(item => item.id === room.id)).find(bot => bot.id === first.id).role, '协作者');
+    await save(first.id, '协作者', false);
+    assert.equal(store.roomMembers(store.rooms.find(item => item.id === room.id)).find(bot => bot.id === first.id).role, '协作者');
+    await save(first.id, '审查者', false, true);
+    assert.equal(store.roomMembers(store.rooms.find(item => item.id === room.id)).find(bot => bot.id === first.id).role, '审查者');
+    assert.equal(store.roomMembers(other).find(bot => bot.id === first.id).role, local ? '执行者' : '审查者');
+    assert.equal(store.rooms.find(item => item.id === room.id).memberRoles?.[first.id], undefined);
+    // An explicit role selection can demote the host and must retain that choice.
+    await save(first.id, '主持人', true, true);
+    await save(first.id, '研究者', false, true);
+    assert.equal(store.roomMembers(store.rooms.find(item => item.id === room.id)).find(bot => bot.id === first.id).role, '研究者');
+    // A checkbox-only demotion requests collaborator locally, preserving the shared role.
+    await save(first.id, '主持人', true);
+    await save(first.id, '协作者', false);
+    assert.equal(store.roomMembers(store.rooms.find(item => item.id === room.id)).find(bot => bot.id === first.id).role, '协作者');
+    const reopened = await f.open();
+    assert.equal(reopened.roomMembers(reopened.rooms.find(item => item.id === room.id)).find(bot => bot.id === first.id).role, '协作者');
+    assert.equal(reopened.bots.find(bot => bot.id === first.id).role, local ? '执行者' : '研究者');
+  }
+});
+
+test('moderator checkbox resets prior role-edit intent so unchecking requests a local collaborator', () => {
+  const vm = require('node:vm'), fields = new Map();
+  const context = { state: { botRoleEdited: true }, window: {}, document: { addEventListener() {} },
+    $: selector => {
+      if (!fields.has(selector)) fields.set(selector, { events: {}, addEventListener(type, listener) { this.events[type] = listener; } });
+      return fields.get(selector);
+    } };
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/renderer/bot-ui.js'), 'utf8'), context);
+  context.updatePersonaPlaceholder = () => {};
+  context.wireBotProfile();
+  context.$('#f_moderator').checked = false;
+  context.$('#f_moderator').events.change();
+  assert.equal(context.state.botRoleEdited, false);
+  assert.equal(context.$('#f_rolePreset').value, '协作者');
+  context.$('#f_rolePreset').value = '审查者';
+  context.$('#f_rolePreset').events.change();
+  assert.equal(context.state.botRoleEdited, true);
+  assert.equal(context.$('#f_moderator').checked, false);
+});
+
 test('JSON read only defaults for missing files; corrupt data remains an error', (t) => {
   const f = fixture(t);
   const file = path.join(f.dir, 'record.json');
@@ -532,13 +651,17 @@ test('avatar contract accepts bounded image data and rejects URL, HTML and misma
 test('rewind edits the selected human in place, discards later chat and resets sessions without new archives', async (t) => {
   const f = fixture(t);
   const { store, room, arc } = await roomWithArchive(f);
-  store.addMessage(room.id, { id: 'question', roomId: room.id, authorType: 'human', text: 'original', status: 'done' });
+  store.addMessage(room.id, { id: 'question', roomId: room.id, authorType: 'human', text: '@A original', status: 'done',
+    audienceBotIds: ['a'], targetBotId: 'a', modeTargetIds: ['a'], roundRun: { id: 'old-run' } });
   store.addMessage(room.id, { id: 'answer', roomId: room.id, authorType: 'bot', text: 'future', status: 'done' });
   store.setSession(JSON.stringify([room.id, 'bot']), { id: 'future-session' });
   const result = store.rewindRoom(room.id, 'question', 'edited');
   assert.deepEqual(result.map((message) => message.id), ['new', 'question']);
   assert.equal(result.at(-1).text, 'edited');
   assert.ok(result.at(-1).updatedAt);
+  assert.equal(result.at(-1).audienceBotIds, undefined);
+  assert.equal(result.at(-1).targetBotId, undefined);
+  assert.equal(result.at(-1).roundRun, undefined);
   assert.equal(store.getSessions()[JSON.stringify([room.id, 'bot'])], undefined);
   assert.deepEqual(store.listArchives(room.id).map((record) => record.id), [arc.id]);
   const reopened = await f.open();

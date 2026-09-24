@@ -1,5 +1,12 @@
 'use strict';
 (function(root,factory){if(typeof module==='object'&&module.exports)module.exports=factory();else root.I18nMainCatalog=factory();})(typeof globalThis!=='undefined'?globalThis:this,()=> ({
+  "请选择提供的选项": "Choose one of the provided options",
+  "原生错误输出超过大小上限，已省略": "Native diagnostics exceeded the size limit and were omitted",
+  "Codex 连接已结束（退出码 {0}）": "Codex connection ended (exit code {0})",
+  "连接测试不支持交互提问": "Connection tests do not support interactive questions",
+  "原生 Agent 正在重试": "Native agent is retrying",
+  "{0} 已停止：{1}（可重试此消息，或 @该成员携带中断上下文继续）": "{0} stopped: {1} (Retry this message or @mention the member to continue with the interrupted context)",
+  "补充模型名称不代表当前提供商已授权；可自定义完整模型 ID。": "Supplementary model names do not confirm provider access. You can enter a full custom model ID.",
   "回答过长": "Answer is too long",
   "CLI 错误输出过长，已省略；退出码 {0}": "CLI diagnostics exceeded the size limit and were omitted; exit code {0}",
   "Claude 提问格式不受支持": "The Claude question format is unsupported",

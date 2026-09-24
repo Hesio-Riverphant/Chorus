@@ -616,9 +616,10 @@ async function saveBot() {
   const local = RoomProfiles.isLocal(targetRoom);
   const existing = (local ? roomMembers(targetRoom) : state.bots).find((b) => b.id === state.editingBotId);
   const payload = botFormPayload();
-  // Host selection is room-local. Do not persist projected host/demotion roles
-  // into the shared bot or side-chat snapshot when only toggling the checkbox.
-  if (targetRoom && (moderatorChecked || !state.botRoleEdited)) {
+  const roleEdited = targetRoom && state.botRoleEdited && !moderatorChecked;
+  // Explicit role edits retain shared-profile semantics. Host checkbox changes
+  // and projected demotions must not overwrite the underlying shared role.
+  if (targetRoom && existing && (moderatorChecked || (!local && !state.botRoleEdited))) {
     const profile = local ? targetRoom.memberProfiles?.[state.editingBotId] || existing : existing;
     payload.role = profile?.role || '协作者'; payload.customRole = !!profile?.customRole;
   }
@@ -648,8 +649,11 @@ async function saveBot() {
     if (moderatorChecked) modId = saved.id;
     else if (modId === saved.id && !moderatorChecked) modId = botIds.find(id => id !== saved.id) || '';
     if (modId !== curRoom.moderatorBotId ||
-        botIds.join(',') !== (curRoom.botIds || []).join(',')) {
-      const updated = await window.api.saveRoom({ ...curRoom, moderatorBotId: modId, botIds });
+        botIds.join(',') !== (curRoom.botIds || []).join(',') || roleEdited) {
+      // A null entry explicitly clears an automatic demotion override, even
+      // when choosing a role also replaces this room's current host.
+      const memberRoles = roleEdited ? { ...curRoom.memberRoles, [saved.id]: null } : curRoom.memberRoles;
+      const updated = await window.api.saveRoom({ ...curRoom, moderatorBotId: modId, botIds, memberRoles });
       Object.assign(curRoom, updated);
     }
   }

@@ -237,6 +237,7 @@ const NativeInputUI = (() => {
         const label = document.createElement('label'); label.className = 'field';
         const text = document.createElement('span'); text.textContent = question.question;
         const input = document.createElement('input'); input.required = true; input.name = question.id; input.value = record.answers[question.id] || '';
+        input.readOnly = question.optionOnly === true;
         record.selections ||= {};
         input.oninput = () => { record.answers[question.id] = input.value; record.selections[question.id] = []; };
         label.append(text);
@@ -249,12 +250,15 @@ const NativeInputUI = (() => {
               record.selections[question.id] = selected.includes(option.label) ? selected.filter(value => value !== option.label) : [...selected, option.label];
               input.value = record.selections[question.id].join(', ');
               for (const candidate of label.querySelectorAll('button')) candidate.setAttribute('aria-pressed', String(record.selections[question.id].includes(candidate.textContent)));
-            } else input.value = option.label;
+            } else {
+              input.value = option.label;
+              for (const candidate of label.querySelectorAll('button')) candidate.setAttribute('aria-pressed', String(candidate === button));
+            }
             record.answers[question.id] = input.value;
           };
           label.append(button);
         }
-        input.placeholder = I18n.t('选择选项或填写其他回答');
+        input.placeholder = question.optionOnly ? I18n.t('请选择提供的选项') : I18n.t('选择选项或填写其他回答');
         label.append(input); fields.append(label);
       }
       const send = document.createElement('button'); send.className = 'primary-btn'; I18n.write(send, () => I18n.t('继续'));

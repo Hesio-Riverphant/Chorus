@@ -11,7 +11,7 @@ const { upsertActivity } = require('../adapters/activities');
 const { calculateCost } = require('./pricing');
 const UsageBudget = require('./usageBudget');
 const { resolveTargets } = require('./router');
-const { buildPrompt, isTranscriptMessage, selectTranscript } = require('./transcript');
+const { buildPrompt, isTranscriptMessage, selectTranscript, audienceFor } = require('./transcript');
 const references = require('../skills/skillReferences');
 const nativeCapabilities = require('../nativeCapabilities');
 const { normalizeMode } = require('../../shared/conversationMode');
@@ -113,6 +113,8 @@ class Orchestrator {
     const explicitTarget = options.targetBotId && this.roomMembers(room).find(bot => bot.id === options.targetBotId && bot.enabled !== false);
     if (options.targetBotId && !explicitTarget) throw new Error(I18n.t('该成员已不在房间或已禁用'));
     const modeTargetIds = this.validateModeTargets(room, explicitTarget ? `@${explicitTarget.name}` : text, mode);
+    const addressed = resolveTargets({ room, text, mode, bots: this.roomMembers(room) });
+    const audienceBotIds = explicitTarget ? [explicitTarget.id] : addressed.via === 'mention' ? addressed.targets.map(bot => bot.id) : null;
 
     const human = {
       id: uid('msg_'),
@@ -121,6 +123,7 @@ class Orchestrator {
       authorId: 'owner',
       text,
       ...(options.targetBotId ? { targetBotId: options.targetBotId } : {}),
+      ...(audienceBotIds ? { audienceBotIds } : {}),
       ...(mode ? { mode, modeTargetIds } : {}),
       mentions: [],
       status: MessageStatus.DONE,
@@ -159,7 +162,9 @@ class Orchestrator {
       bots: this.roomMembers(room),
       room,
     });
-    const targets = human.targetBotId ? this.roomMembers(room).filter(bot => bot.id === human.targetBotId && bot.enabled !== false) : resolved.targets;
+    const audienceBotIds = audienceFor(human, list, this.roomMembers(room));
+    const targets = (human.targetBotId ? this.roomMembers(room).filter(bot => bot.id === human.targetBotId && bot.enabled !== false) : resolved.targets)
+      .filter(bot => !Array.isArray(audienceBotIds) || audienceBotIds.includes(bot.id));
     const via = human.targetBotId ? 'mention' : resolved.via;
 
     const run = {
@@ -172,7 +177,7 @@ class Orchestrator {
       tokens: 0,
       cost: 0,
       status: RunStatus.RUNNING,
-      targets, mode, modeTargetIds,
+      targets, mode, modeTargetIds, audienceBotIds,
       active: new Set(),
       stopping: false,
       via,
@@ -246,7 +251,8 @@ class Orchestrator {
     const skillBlocks = skillScope === 'human' && human && human.authorType === AuthorType.HUMAN
       ? this.skillBlocksForText(human.text) : [];
     const run = this.miniRun(roomId, failed.roundId, { mode: failed.mode || human?.mode,
-      modeTargetIds: failed.modeTargetIds || human?.modeTargetIds });
+      modeTargetIds: failed.modeTargetIds || human?.modeTargetIds,
+      audienceBotIds: audienceFor(failed, persistence.getMessages(roomId), this.roomMembers(room)) });
     try {
       if (this.canDispatch(run, [bot])) {
         persistence.updateMessage(roomId, messageId, { supersededBy: newId });
@@ -367,6 +373,7 @@ class Orchestrator {
       if (run.wave > this.maxAutoTurns(run.roomId)) {
         this.guardNote(run, systemText`已达最大自动接力轮次（${this.maxAutoTurns(run.roomId)}），如需继续请手动发起；未发言：${next.map((b) => b.name).join('、')}`);
         run.status = RunStatus.BUDGET;
+        run.stopReason = 'auto_turns';
         break;
       }
       if (!this.canDispatch(run, next)) break;
@@ -392,6 +399,7 @@ class Orchestrator {
         : mentions.filter((x) => x !== 'all');
 
       for (const target of targets) {
+        if (Array.isArray(run.audienceBotIds) && !run.audienceBotIds.includes(target)) continue;
         if (['plan', 'goal'].includes(run.mode) && !(run.modeTargetIds || []).includes(target)) {
           if (msg.authorId !== (room.moderatorBotId || bots[0]?.id)) continue;
           run.modeTargetIds = [...(run.modeTargetIds || []), target];
@@ -484,13 +492,14 @@ class Orchestrator {
 
   canDispatch(run, pending, reserved = false) {
     if (run.stopping || !(reserved ? [RunStatus.RUNNING, RunStatus.BUDGET] : [RunStatus.RUNNING]).includes(run.status)) return false;
-    let reason;
-    if (!reserved && run.calls >= this.setting('maxCliCallsPerRun')) reason = I18n.t('已达每次 run 最大 CLI 调用数');
+    let reason, stopReason;
+    if (!reserved && run.calls >= this.setting('maxCliCallsPerRun')) { reason = I18n.t('已达每次 run 最大 CLI 调用数'); stopReason = 'calls'; }
     const budget = this.budgetSnapshot(run);
-    if (!reason && budget.tokenLimit > 0 && budget.reportedTokens >= budget.tokenLimit) reason = I18n.t('已报告 Token 达到本轮软上限');
-    if (!reason && budget.costLimit > 0 && budget.reportedCost >= budget.costLimit) reason = I18n.t('已报告用量费用达到本轮软上限');
+    if (!reason && budget.tokenLimit > 0 && budget.reportedTokens >= budget.tokenLimit) { reason = I18n.t('已报告 Token 达到本轮软上限'); stopReason = 'tokens'; }
+    if (!reason && budget.costLimit > 0 && budget.reportedCost >= budget.costLimit) { reason = I18n.t('已报告用量费用达到本轮软上限'); stopReason = 'cost'; }
     if (!reason) return true;
     run.status = RunStatus.BUDGET;
+    run.stopReason = stopReason;
     this.guardNote(run, systemText`${reason}；未发言：${pending.map((b) => b.name).join('、')}。已开始的任务继续完成。`);
     return false;
   }
@@ -518,6 +527,7 @@ class Orchestrator {
       authorType: AuthorType.SYSTEM,
       authorId: 'system',
       ...(run.mode ? { mode: run.mode, modeTargetIds: [...(run.modeTargetIds || [])] } : {}),
+      ...(Array.isArray(run.audienceBotIds) ? { audienceBotIds: [...run.audienceBotIds] } : {}),
       text,
       ...(metadata ? { i18n: metadata } : {}),
       status: MessageStatus.DONE,
@@ -532,7 +542,7 @@ class Orchestrator {
     if (!Number.isFinite(run.startedAt)) run.startedAt = Date.now();
     const human = persistence.getMessage(run.roomId, run.roundId);
     if (human?.authorType === AuthorType.HUMAN && (human.roundRun?.id !== run.id || run.endedAt)) {
-      const roundRun = { id: run.id, startedAt: run.startedAt, endedAt: run.endedAt || null, status: run.status, budget: this.budgetSnapshot(run) };
+      const roundRun = { id: run.id, startedAt: run.startedAt, endedAt: run.endedAt || null, status: run.status, stopReason: run.stopReason || null, budget: this.budgetSnapshot(run) };
       if (JSON.stringify(human.roundRun) !== JSON.stringify(roundRun)) {
         // Persist boundaries immediately; elapsed display must survive a clean restart.
         persistence.updateMessage(run.roomId, human.id, { roundRun, status: human.status });
@@ -550,6 +560,7 @@ class Orchestrator {
     return {
       id: run.id, status: run.status === RunStatus.BUDGET && !run.endedAt ? RunStatus.RUNNING : run.status,
       dispatchStopped: run.status === RunStatus.BUDGET, wave: run.wave, calls: run.calls,
+      stopReason: run.stopReason || null,
       roundId: run.roundId, startedAt: run.startedAt, endedAt: run.endedAt || null,
       tokens: run.tokens, cost: run.cost, stopping: run.stopping, budget: this.budgetSnapshot(run),
       mode: run.mode || 'chat', modeTargetIds: run.modeTargetIds || [],
@@ -614,6 +625,7 @@ class Orchestrator {
       runId: run.id,
       _wave: run.wave || 0,
       ...(run.mode ? { mode: run.mode, modeTargetIds: [...(run.modeTargetIds || [])] } : {}),
+      ...(Array.isArray(run.audienceBotIds) ? { audienceBotIds: [...run.audienceBotIds] } : {}),
       skillScope: opts.skillScope || ((run.wave || 0) === 0 ? 'human' : 'relay'),
       createdAt: Date.now(),
     };
@@ -777,7 +789,7 @@ class Orchestrator {
         error: result.error,
         usage: { inputTokens, outputTokens, tokens, cost, estimated, ...nativeUsage },
       });
-      this.systemNote(run, systemText`${bot.name} 已停止：${result.error}（其他成员不受影响，可点击该消息重试）`);
+      this.systemNote(run, systemText`${bot.name} 已停止：${result.error}（可重试此消息，或 @该成员携带中断上下文继续）`);
       this.emit({ kind: 'message_update', roomId: run.roomId, id: message.id, patch: { status: MessageStatus.ERROR, text: result.text || message.text, error: result.error, usage: { inputTokens, outputTokens, tokens, cost, estimated, ...nativeUsage } } });
       return { bot, message, result };
     }

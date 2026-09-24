@@ -1,5 +1,26 @@
 'use strict';
 
+// Native failures need their actionable diagnostic, independent of provider code.
+require('node:test')('Claude errors arrays retain provider detail and remove credentials', () => {
+  const assert = require('node:assert/strict'), events = [];
+  require('../src/main/adapters/cliSpecs').PARSERS.claude(JSON.stringify({ type: 'result', subtype: 'error_during_execution',
+    is_error: true, errors: ['Authentication rejected: sign in again', 'api_key=synthetic-test-secret'], usage: {} }),
+  (type, payload) => events.push({ type, payload }), {});
+  const error = events.find(event => event.type === 'error').payload;
+  assert.match(error, /Authentication rejected: sign in again/);
+  assert.doesNotMatch(error, /synthetic-test-secret/);
+});
+
+require('node:test')('bounded native stderr decodes split UTF8 and never reveals a detached credential suffix', () => {
+  const assert = require('node:assert/strict');
+  const { createDiagnostics } = require('../src/main/adapters/diagnostics');
+  const d = createDiagnostics(), text = Buffer.from('\uFEFF认证失败：请重新登录');
+  for (const byte of text) d.push(Buffer.from([byte]));
+  assert.equal(d.text(), '认证失败：请重新登录');
+  const secret = createDiagnostics(40); secret.push(Buffer.from('api_key=' + 'x'.repeat(100))); secret.push(Buffer.from('tail-secret'));
+  assert.match(secret.text(), /超过大小上限/); assert.doesNotMatch(secret.text(), /tail-secret|xxxx/);
+});
+
 // Offline process/NDJSON boundary tests. Never launches a model CLI.
 const assert = require('node:assert/strict');
 const { test } = require('node:test');

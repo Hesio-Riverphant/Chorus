@@ -84,7 +84,7 @@ test('native cancellation invalidates cards without replying to a request the CL
   assert.throws(() => f.protocol.respondInput(id, { decision: 'accept' }), /已结束/);
 });
 test('expired authorization is denied and resumes the invocation instead of granting permission', async t => {
-  const f = fixture(t, { inputTimeoutMs: 10 }); f.protocol.consume(request());
+  const f = fixture(t, { approvalTimeoutMs: 10 }); f.protocol.consume(request());
   await new Promise(resolve => setTimeout(resolve, 25));
   assert.equal(f.written.at(-1).response.response.behavior, 'deny');
   assert.equal(f.protocol.pending, false); assert.equal(f.errors.length, 0);

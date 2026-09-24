@@ -1,6 +1,13 @@
 'use strict';
 // Application-owned UI text. User content and native agent output never enter this catalog.
 (function(root,factory){if(typeof module==='object'&&module.exports)module.exports=factory();else root.I18nCatalog=factory();})(typeof globalThis!=='undefined'?globalThis:this,()=>({
+  "请选择提供的选项": "Choose one of the provided options",
+  "自动接力轮次已用完": "Automatic relay limit reached",
+  "本轮调用次数已用完": "Round call limit reached",
+  "已达 Token 软上限": "Token allowance reached",
+  "已达费用软上限": "Cost allowance reached",
+  "已停止自动派发": "Automatic dispatch stopped",
+  "小彩蛋": "Easter egg",
   "{0} 请求授权": "{0} requests approval",
   "始终允许仅适用于本次原生会话；超时自动拒绝。": "Always allow applies only to this native session. Expired requests are declined.",
   "允许一次": "Allow once",

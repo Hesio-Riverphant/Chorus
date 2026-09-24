@@ -19,6 +19,16 @@ const bot = { id: 'b1', name: 'One', cliType: 'claude', persona: 'Keep constrain
 const room = { id: 'r1', botIds: [bot.id] };
 const human = (id, text, extra = {}) => ({ id, authorType: 'human', text, status: 'done', ...extra });
 
+test('resuming an interrupted relay retains the delegating member constraints with zero ordinary history', () => {
+  const messages = [human('task', 'Plan release'),
+    { id: 'delegation', roundId: 'task', authorType: 'bot', authorId: 'other', status: 'done', text: '@One fix Linux permissions only; leave API unchanged' },
+    { id: 'failed', roundId: 'task', authorType: 'bot', authorId: bot.id, status: 'error', error: 'Provider interrupted', text: 'One permission changed' },
+    human('resume', '@One continue', { audienceBotIds: [bot.id] })];
+  const selection = selectTranscript(messages, bot, [bot], { roundId: 'resume', catchupMessages: 0 });
+  assert.deepEqual(selection.messages.map(m => m.id), ['task', 'delegation', 'failed', 'resume']);
+  assert.match(buildPrompt(bot, selection.messages, [bot], room), /leave API unchanged/);
+});
+
 test('Claude ordinary stream usage merges partial snapshots and separates latest request from call totals', () => {
   const p = parser('claude');
   for (const id of ['msg_a', 'msg_b']) {
@@ -146,7 +156,7 @@ test('normal Codex chat uses native temporary RPC with cwd, model, effort and in
   const f = chatFixture(); await f.ready();
   assert.equal(f.factoryOptions.cwd, process.cwd());
   assert.deepEqual(f.factoryOptions.cliSettings.enabledCliIds, ['codex']);
-  assert.deepEqual(f.calls[0], { method: 'thread/start', params: { cwd: process.cwd(), ephemeral: true,
+  assert.deepEqual(f.calls[0], { method: 'thread/start', params: { cwd: process.cwd(), ephemeral: true, dynamicTools: [require('../src/main/adapters/questionTool').questionTool],
     approvalPolicy: 'on-request', sandbox: 'workspace-write', model: 'model-test', allowProviderModelFallback: false } });
   assert.deepEqual(f.calls[1].params, { threadId: 'thread-chat', input: [{ type: 'text', text: 'Current input' }], effort: 'high' });
   f.send('thread/tokenUsage/updated', { tokenUsage: { total: { inputTokens: 80000, outputTokens: 120, totalTokens: 80120, cachedInputTokens: 60000 },
