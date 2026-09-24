@@ -67,7 +67,13 @@ if (smoke) {
         const { TerminalService } = require('./src/main/workbench/terminals');
         await new Promise((resolve, reject) => {
           let text = '', finished = false;
-          const finish = error => { if (finished) return; finished = true; clearTimeout(timer); service.dispose(); error ? reject(error) : resolve(); };
+          const finish = error => {
+            if (finished) return;
+            finished = true; clearTimeout(timer);
+            service.dispose().then(() => error ? reject(error) : resolve(), cleanupError => {
+              reject(error ? new AggregateError([error, cleanupError], error.message + '; ' + cleanupError.message) : cleanupError);
+            });
+          };
           const service = new TerminalService({
             ptyModule: { spawn: (executable, args, options) => nativePty.spawn(executable, process.platform === 'win32' ? ['-NoProfile', ...args] : args, options) },
             emit: event => { if (event.kind === 'terminal-data') { text = (text + event.data).slice(-8192); service.acknowledge(event.id, event.data.length); if (text.includes('CONVOKE_PACKAGED_PTY_OK')) finish(); } },

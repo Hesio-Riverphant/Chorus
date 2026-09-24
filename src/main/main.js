@@ -106,8 +106,7 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   if (closing) return;
   closing = true;
-  workbench?.dispose();
-  Promise.all([orchestrator.stopAll(), connectionTest.cancel()]).then(() => {
+  Promise.all([workbench?.dispose(), orchestrator.stopAll(), connectionTest.cancel()]).then(() => {
     persistence.flushSync();
     readyToQuit = true;
     app.quit();

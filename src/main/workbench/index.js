@@ -88,10 +88,17 @@ function registerWorkbench(win, persistence, options = {}) {
     if (!payload || typeof payload !== 'object' || !Object.hasOwn(operations, payload.operation)) throw new Error(I18n.t('工作台操作无效'));
     return operations[payload.operation](payload);
   });
-  const dispose = () => { generation++; terminals.dispose(); return browsers.dispose(); };
-  win.webContents.on('render-process-gone', dispose);
-  win.webContents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => { if (isMainFrame) dispose(); });
-  win.once('closed', () => { dispose(); ipcMain.removeHandler('workbench:request'); });
+  const dispose = () => {
+    generation++;
+    return Promise.allSettled([terminals.dispose(), browsers.dispose()]).then(results => {
+      const errors = results.filter(result => result.status === 'rejected').map(result => result.reason);
+      if (errors.length) throw new AggregateError(errors, errors.map(error => error.message || String(error)).join('; '));
+    });
+  };
+  const disposeFromEvent = () => { dispose().catch(error => console.error('[workbench-dispose-failed]', error)); };
+  win.webContents.on('render-process-gone', disposeFromEvent);
+  win.webContents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => { if (isMainFrame) disposeFromEvent(); });
+  win.once('closed', () => { disposeFromEvent(); ipcMain.removeHandler('workbench:request'); });
   return { dispose, terminals, browsers };
 }
 

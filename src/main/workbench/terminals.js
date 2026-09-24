@@ -8,6 +8,7 @@ const MAX_SESSIONS = 8;
 const HIGH_WATER = 256 * 1024;
 const LOW_WATER = 64 * 1024;
 const MAX_INPUT = 64 * 1024;
+const CLOSE_TIMEOUT_MS = 5000;
 
 function dimensions(value) {
   return { cols: Math.max(10, Math.min(500, Math.floor(Number(value.cols) || 80))),
@@ -23,15 +24,18 @@ function shellSpec() {
 }
 
 class TerminalService {
-  constructor({ emit, ptyModule } = {}) {
+  constructor({ emit, ptyModule, closeTimeoutMs = CLOSE_TIMEOUT_MS } = {}) {
     this.emit = emit;
     this.ptyModule = ptyModule;
     this.sessions = new Map();
+    this.closing = new Map();
+    this.closeTimeoutMs = closeTimeoutMs;
   }
 
   create({ id, roomId, cwd, cols, rows }) {
-    if (typeof id !== 'string' || !/^[\w-]{1,80}$/.test(id) || this.sessions.has(id)) throw new Error(I18n.t('终端标识无效'));
-    if (this.sessions.size >= MAX_SESSIONS) throw new Error(I18n.t('最多同时打开 8 个终端，请先关闭一个终端'));
+    if (this.disposing) throw new Error(I18n.t('工作台已重置，请重新打开终端'));
+    if (typeof id !== 'string' || !/^[\w-]{1,80}$/.test(id) || this.sessions.has(id) || this.closing.has(id)) throw new Error(I18n.t('终端标识无效'));
+    if (this.sessions.size + this.closing.size >= MAX_SESSIONS) throw new Error(I18n.t('最多同时打开 8 个终端，请先关闭一个终端'));
     const pty = this.ptyModule || require('node-pty');
     const shell = shellSpec();
     const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
@@ -50,18 +54,20 @@ class TerminalService {
     session.exitListener = processHandle.onExit(({ exitCode, signal }) => {
       session.exited = true;
       session.exit = { kind: 'terminal-exit', id, exitCode, signal };
-      if (session.ready) this.emit(session.exit);
+      if (session.closing) session.finishClose();
+      else if (session.ready) this.emit(session.exit);
     });
     return { id, name: shell.name, cwd, pid: processHandle.pid };
   }
 
   output(session, data) {
     for (let index = 0; index < data.length; index += MAX_INPUT) {
+      if (session.closing) return;
       const chunk = data.slice(index, index + MAX_INPUT);
       session.outstanding += chunk.length;
       this.emit({ kind: 'terminal-data', id: session.id, data: chunk });
     }
-    if (session.outstanding > HIGH_WATER && !session.paused && !session.exited) {
+    if (session.outstanding > HIGH_WATER && !session.paused && !session.exited && !session.closing) {
       session.paused = true; session.process.pause();
     }
   }
@@ -103,13 +109,50 @@ class TerminalService {
   }
 
   close(id) {
-    const session = this.sessions.get(id); if (!session) return;
+    if (this.closing.has(id)) return this.closing.get(id).closePromise;
+    const session = this.sessions.get(id); if (!session) return Promise.resolve();
     this.sessions.delete(id);
-    session.dataListener?.dispose(); session.exitListener?.dispose();
-    if (!session.exited) { try { session.process.kill(); } catch { /* Already exited between notification and close. */ } }
+    session.closing = true;
+    session.pending = '';
+    session.dataListener?.dispose();
+    if (session.exited) { session.exitListener?.dispose(); return Promise.resolve(); }
+    this.closing.set(id, session);
+    let resolveClose, rejectClose;
+    session.closePromise = new Promise((resolve, reject) => { resolveClose = resolve; rejectClose = reject; });
+    const timer = setTimeout(() => {
+      const error = new Error(`Terminal ${id} did not exit within ${this.closeTimeoutMs} ms`);
+      error.code = 'TERMINAL_CLOSE_TIMEOUT';
+      rejectClose(error);
+      // Keep tracking a late native exit. A timeout is not proof of teardown.
+    }, this.closeTimeoutMs);
+    session.finishClose = () => {
+      clearTimeout(timer);
+      session.exitListener?.dispose();
+      this.closing.delete(id);
+      queueMicrotask(() => { if (session.closeError) rejectClose(session.closeError); else resolveClose(); });
+    };
+    // node-pty signals exit only after its output pipe drains. In particular,
+    // Windows kill() starts asynchronous native/worker cleanup; it is not exit.
+    try {
+      if (session.paused) { session.paused = false; session.process.resume(); }
+      if (!session.exited) session.process.kill();
+    } catch (error) {
+      session.closeError = error;
+      clearTimeout(timer);
+      rejectClose(error);
+    }
+    return session.closePromise;
   }
 
-  dispose() { for (const id of this.sessions.keys()) this.close(id); }
+  dispose() {
+    if (this.disposing) return this.disposing;
+    const ids = new Set([...this.sessions.keys(), ...this.closing.keys()]);
+    this.disposing = Promise.allSettled([...ids].map(id => this.close(id))).then(results => {
+      const errors = results.filter(result => result.status === 'rejected').map(result => result.reason);
+      if (errors.length) throw new AggregateError(errors, errors.map(error => error.message || String(error)).join('; '));
+    }).finally(() => { this.disposing = null; });
+    return this.disposing;
+  }
 }
 
 module.exports = { TerminalService, dimensions, shellSpec, MAX_SESSIONS };

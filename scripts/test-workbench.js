@@ -68,31 +68,35 @@ test('Git review supports a new repository before its first commit', async t => 
   git(root, ['add', '--', '.']); assert.match((await diff(root, 'first.txt')).text, /\+first/);
 });
 
-function fakePty() {
+function fakePty({ autoExit = true, killError } = {}) {
   const processes = [];
   return { processes, spawn(executable, args, options) {
     const emitter = new EventEmitter();
-    const item = { pid: 42, options, executable, args, data: value => emitter.emit('data', value), exit: value => emitter.emit('exit', value),
+    const item = { pid: 42, options, executable, args, kills: 0, listeners: name => emitter.listenerCount(name), data: value => emitter.emit('data', value), exit: value => emitter.emit('exit', value),
       onData(callback) { emitter.on('data', callback); return { dispose: () => emitter.off('data', callback) }; },
       onExit(callback) { emitter.on('exit', callback); return { dispose: () => emitter.off('exit', callback) }; },
-      pause() { this.paused = true; }, resume() { this.paused = false; }, kill() { this.killed = true; },
+      pause() { this.paused = true; }, resume() { this.paused = false; }, kill() {
+        this.killed = true; this.kills++;
+        if (autoExit) queueMicrotask(() => item.exit({ exitCode: 0 }));
+        if (killError) throw killError;
+      },
       write(value) { this.input = value; }, resize(cols, rows) { this.size = [cols, rows]; } };
     processes.push(item); return item;
   } };
 }
 
-test('interactive terminal buffers initial output, streams input/resizes and kills on tab close', () => {
+test('interactive terminal buffers initial output, streams input/resizes and kills on tab close', async () => {
   const emitted = [], pty = fakePty(); const service = new TerminalService({ emit: item => emitted.push(item), ptyModule: pty });
   service.create({ id: 'term1', roomId: 'room', cwd: process.cwd(), cols: 90, rows: 28 });
   pty.processes[0].data('prompt>'); assert.equal(emitted.length, 0);
   service.ready('term1'); assert.equal(emitted[0].data, 'prompt>');
   service.write('term1', 'dir\r'); assert.equal(pty.processes[0].input, 'dir\r');
   service.resize('term1', { cols: 112, rows: 32 }); assert.deepEqual(pty.processes[0].size, [112, 32]);
-  service.close('term1'); assert.equal(pty.processes[0].killed, true);
+  await service.close('term1'); assert.equal(pty.processes[0].killed, true);
   assert.throws(() => service.write('term1', 'x'), /已关闭/);
 });
 
-test('terminal backpressure pauses and resumes output and sessions are bounded', () => {
+test('terminal backpressure pauses and resumes output and sessions are bounded', async () => {
   const emitted = [], pty = fakePty(); const service = new TerminalService({ emit: item => emitted.push(item), ptyModule: pty });
   service.create({ id: 'term1', cwd: process.cwd() }); service.ready('term1');
   pty.processes[0].data('x'.repeat(300000)); assert.equal(pty.processes[0].paused, true);
@@ -100,7 +104,66 @@ test('terminal backpressure pauses and resumes output and sessions are bounded',
   assert.equal(pty.processes[0].paused, false);
   for (let index = 2; index <= 8; index++) service.create({ id: `term${index}`, cwd: process.cwd() });
   assert.throws(() => service.create({ id: 'term9', cwd: process.cwd() }), /8/);
-  service.dispose(); assert.equal(service.sessions.size, 0); assert.ok(pty.processes.every(item => item.killed));
+  await service.dispose(); assert.equal(service.sessions.size, 0); assert.ok(pty.processes.every(item => item.killed));
+});
+
+test('terminal close waits for native exit, shares pending closure and drains paused output', async () => {
+  const pty = fakePty({ autoExit: false }), emitted = [];
+  const service = new TerminalService({ ptyModule: pty, emit: event => emitted.push(event) });
+  service.create({ id: 'term', cwd: process.cwd() }); service.ready('term');
+  const child = pty.processes[0]; child.data('x'.repeat(300000));
+  assert.equal(child.paused, true);
+  const close = service.close('term'); let resolved = false; close.then(() => { resolved = true; });
+  assert.equal(service.close('term'), close); assert.equal(child.kills, 1); assert.equal(child.paused, false);
+  assert.equal(child.listeners('exit'), 1); assert.equal(child.listeners('data'), 0);
+  assert.throws(() => service.write('term', 'x'), /已关闭/);
+  assert.throws(() => service.resize('term', {}), /已关闭/);
+  assert.throws(() => service.create({ id: 'term', cwd: process.cwd() }), /无效/);
+  await Promise.resolve(); assert.equal(resolved, false);
+  const count = emitted.length; child.data('after close'); assert.equal(emitted.length, count);
+  const dispose = service.dispose(); assert.equal(service.dispose(), dispose);
+  assert.throws(() => service.create({ id: 'new', cwd: process.cwd() }), /已重置/);
+  child.exit({ exitCode: 0 }); await close; await dispose;
+  assert.equal(child.listeners('exit'), 0); assert.equal(service.closing.size, 0); assert.equal(child.kills, 1);
+});
+
+test('closing an already exited terminal never kills it', async () => {
+  const pty = fakePty({ autoExit: false }), service = new TerminalService({ ptyModule: pty, emit() {} });
+  service.create({ id: 'term', cwd: process.cwd() });
+  pty.processes[0].exit({ exitCode: 9 });
+  await service.close('term'); await service.close('term'); await service.dispose();
+  assert.equal(pty.processes[0].kills, 0); assert.equal(pty.processes[0].listeners('exit'), 0);
+});
+
+test('terminal teardown timeout stays failed and tracked until a late exit', async () => {
+  const pty = fakePty({ autoExit: false }), service = new TerminalService({ ptyModule: pty, emit() {}, closeTimeoutMs: 10 });
+  service.create({ id: 'term', cwd: process.cwd() });
+  const close = service.close('term');
+  await assert.rejects(close, { code: 'TERMINAL_CLOSE_TIMEOUT' });
+  await assert.rejects(service.dispose(), /did not exit/);
+  assert.equal(service.closing.size, 1); assert.equal(pty.processes[0].listeners('exit'), 1);
+  assert.equal(pty.processes[0].kills, 1);
+  pty.processes[0].exit({ exitCode: 0 });
+  await assert.rejects(close, { code: 'TERMINAL_CLOSE_TIMEOUT' });
+  assert.equal(service.closing.size, 0); await service.dispose();
+});
+
+test('native kill errors propagate without pretending teardown completed or killing twice', async () => {
+  const failure = new Error('native kill failed'), pty = fakePty({ autoExit: false, killError: failure });
+  const service = new TerminalService({ ptyModule: pty, emit() {} });
+  service.create({ id: 'term', cwd: process.cwd() });
+  await assert.rejects(service.close('term'), failure);
+  await assert.rejects(service.dispose(), /native kill failed/);
+  assert.equal(service.closing.size, 1); assert.equal(pty.processes[0].kills, 1);
+  pty.processes[0].exit({ exitCode: 1 }); await service.dispose();
+});
+
+test('closing from an output callback cannot pause or emit further chunks after kill', async () => {
+  const pty = fakePty(); let closing; let count = 0;
+  const service = new TerminalService({ ptyModule: pty, emit() { count++; closing = service.close('term'); } });
+  service.create({ id: 'term', cwd: process.cwd() }); service.ready('term');
+  pty.processes[0].data('x'.repeat(300000)); await closing;
+  assert.equal(count, 1); assert.notEqual(pty.processes[0].paused, true);
 });
 
 test('browser rejects executable/local/credential URLs and clamps native view bounds', () => {
@@ -228,4 +291,22 @@ test('workbench IPC rejects other windows/frames and persists only bounded layou
   assert.equal(settings.workbenchLayout.dockOpen, true); assert.equal('secret' in settings.workbenchLayout, false);
   assert.equal(normalizeLayout({ dockWidth: NaN }).dockWidth, 430);
   win.emit('closed'); assert.equal(handlers.size, 0);
+});
+
+test('event-driven workbench disposal reports rejected teardown promises', async t => {
+  const failures = [], win = new EventEmitter(); win.webContents = new EventEmitter();
+  win.webContents.send = () => {}; win.webContents.isDestroyed = () => false; win.isDestroyed = () => false;
+  const service = registerWorkbench(win, { getSettings: () => ({}) }, { electron: {
+    ipcMain: { handle() {}, removeHandler() {} }, WebContentsView: class {},
+  } });
+  const original = console.error; console.error = (...args) => failures.push(args);
+  t.after(() => { console.error = original; });
+  service.terminals.dispose = async () => { throw new Error('teardown fixture'); };
+  win.webContents.emit('render-process-gone');
+  win.webContents.emit('did-start-navigation', null, '', false, true);
+  win.emit('closed');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(failures.length, 3);
+  assert.ok(failures.every(([label, error]) => label === '[workbench-dispose-failed]' && /teardown fixture/.test(error.message)));
+  await assert.rejects(service.dispose(), /teardown fixture/);
 });
