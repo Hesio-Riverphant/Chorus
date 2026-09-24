@@ -18,7 +18,7 @@ function fixture(t) {
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   // Production IPC obtains this canonical root through roomDirectory. Windows
   // runners may expose TEMP with an 8.3 alias, unlike realpath/Git output.
-  return fs.realpathSync(directory);
+  return fs.realpathSync.native(directory);
 }
 function git(cwd, args) { return execFileSync('git', args, { cwd, windowsHide: true, encoding: 'utf8' }); }
 
