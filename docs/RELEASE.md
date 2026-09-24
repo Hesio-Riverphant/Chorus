@@ -2,7 +2,7 @@
 
 ## 0.5.1 验收范围
 
-Windows 11 x64 是本轮实际验收平台。Ubuntu 24.04 x64 提供相同源码的构建入口与 CI；本轮未运行 Linux，尚未完成双端等价验收。源文件、界面测试、真实模型调用和发行包启动分别记录。未签名的安装器可能触发系统信誉提示。
+Windows 11 x64 完成本地验收，Windows runner 与 Ubuntu 24.04 x64 完成相同源码的自动界面和包启动验收。Ubuntu 还验证 ZIP 沙箱设置、DEB 安装、普通用户启动和卸载。个人桌面硬件、各 Agent 账号及长期使用分别验证；CI 不代表这些场景全部通过。未签名的 Windows 安装器可能触发系统信誉提示。
 
 ## 构建
 
@@ -26,6 +26,8 @@ npm run package:release
 - `node scripts/package-desktop.js --source --strict`：生成公开源码候选目录。
 
 Linux 无显示环境需使用 Xvfb 执行 Electron 检查；原生 node-pty 构建需要 Python、make 和 C++ 工具链。以仓库 CI 的平台依赖与命令为准。Windows 与 Linux 产物不能互换。
+
+Ubuntu 24.04 CI 为当前构建目录设置限定路径的 AppArmor userns 授权，保持 Chromium sandbox。ZIP 验收撤销该授权后按 README 设置 root 所有的 `chrome-sandbox`（4755）；DEB 安装自带 `/opt/Chorus/chorus` 的 AppArmor profile。应用目录权限为 0755，用户无需用 root 启动应用。ZIP 便携指无需安装应用，沙箱仍有首次配置要求。
 
 ## 产物与数据
 
@@ -53,7 +55,7 @@ GitHub Actions 配置运行平台矩阵与构建。本地准备流程不会自�
 
 Build on the target x64 platform with Node.js 24 and locked dependencies. Run the unit, Electron UI, room, capability, workbench, language and release checks above, then `npm run package:release`. Explicit commands are `package:win` for the Windows installer/zip and `package:linux -- --homepage <actual-project-url>` for deb/zip. Linux CI uses Xvfb and the native module build toolchain.
 
-Windows 11 is the actual validation platform for this revision. Ubuntu 24.04 build configuration is prepared; Linux execution and feature parity remain unverified. Do not treat workflow configuration as a passed remote build.
+Windows 11 has local validation; Windows and Ubuntu 24.04 runners execute the same UI and packaged-startup checks. Ubuntu additionally verifies ZIP sandbox setup, Debian installation, normal-user startup and removal. The ZIP needs the sandbox setup documented in README; the Debian package installs a path-scoped AppArmor profile. Individual desktop hardware, accounts and long-running use remain separate acceptance tasks. See actual Actions results for each revision.
 
 Packages preserve the existing `agent-room` user-data directory and bundled third-party licenses. Exit the application before backing up all data. Installer removal retains user data. Builds are unsigned.
 

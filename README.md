@@ -8,15 +8,33 @@ Chorus 是本地桌面应用，连接已安装的 Agent CLI。把不同模型加
 
 ## 开始使用
 
-需要 **Windows 11 x64**，以及至少一个已安装、已登录的 Agent CLI。安装包内置桌面运行环境，无需另装 Node.js。
+需要 **Windows 11 x64 或 Ubuntu 24.04 x64**，以及至少一个已安装、已登录的 Agent CLI。安装包内置桌面运行环境，无需另装 Node.js。
 
 1. 运行 `Chorus-0.5.1-windows-x64-setup.exe` 安装，或完整解压同版本 zip 后运行 `Chorus.exe`。
 2. 打开 **设置 → Agent 接入**，扫描并启用 Agent；创建成员，获取模型列表并测试连接。
 3. 新建房间，选择项目目录和成员，输入任务。调用过程中可以查看工具、文件变更、用量，也可以随时停止。
 
-[下载安装包](https://github.com/Hesio-Riverphant/Chorus/releases/latest)。Windows 提供安装器和 zip，均为 x64，包未签名。Linux 正在验证，暂不提供安装包。
+[下载安装包](https://github.com/Hesio-Riverphant/Chorus/releases/latest)。Windows 提供安装器和 zip，均为 x64，包未签名；Ubuntu 提供 `.deb` 和 zip。
 
 卸载可使用开始菜单中的 **Uninstall Chorus**，或下载同版本卸载启动包、解压后运行 `Uninstall Chorus.cmd`；它会打开系统登记的卸载程序，聊天数据保留。便携版退出后删除解压目录即可。
+
+Ubuntu 推荐安装 `.deb`，然后从应用菜单打开 Chorus：
+
+```sh
+sudo apt install ./Chorus-0.5.1-linux-amd64.deb
+# 卸载，保留聊天数据
+sudo apt remove chorus
+```
+
+Ubuntu zip 需完整解压；首次在解压目录执行以下命令设置 Chromium 沙箱，然后启动。不要以 root 运行应用。
+
+```sh
+sudo chown root:root chrome-sandbox
+sudo chmod 4755 chrome-sandbox
+./chorus
+```
+
+两端均通过自动界面与包启动检查；Ubuntu 24.04 CI 还验证了安装/卸载。个人桌面环境和各 Agent 账号需分别验证。
 
 ## 怎么协作
 
@@ -42,6 +60,7 @@ Chat 用于日常会话；Plan 和 Goal 交给支持这些模式的原生 Agent 
 ## 数据与设置
 
 - Windows 数据目录：`%APPDATA%/agent-room`。退出应用后备份整个目录；升级沿用现有聊天，卸载保留数据。
+- Linux 数据目录：`${XDG_CONFIG_HOME:-~/.config}/agent-room`。
 - 普通房间共用成员资料；侧聊在创建后独立编辑。成员工作目录优先于房间目录，未设置时使用房间目录，再使用默认目录。
 - MCP/插件按 Agent 默认和房间成员覆盖管理；技能登记引用原文件。
 - 费用可按 Agent/模型设置缓存命中输入、未命中输入、输出三类单价，支持高峰和空闲时段。缺少原生用量时显示未知。

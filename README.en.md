@@ -8,15 +8,33 @@ Chorus is a local desktop app that connects installed Agent CLIs. Add different 
 
 ## Get started
 
-Requires **Windows 11 x64** and at least one installed, authenticated Agent CLI. Desktop packages include the runtime; Node.js is not required.
+Requires **Windows 11 x64 or Ubuntu 24.04 x64** and at least one installed, authenticated Agent CLI. Desktop packages include the runtime; Node.js is not required.
 
 1. Run `Chorus-0.5.1-windows-x64-setup.exe`, or extract the complete matching zip and run `Chorus.exe`.
 2. Open **Settings → Agent connections**, scan and enable an agent, then create a member, fetch its model list and test the connection.
 3. Create a room, choose its project directory and members, and send a task. Inspect tools, file changes and usage as it runs, or stop it at any time.
 
-[Download the latest release](https://github.com/Hesio-Riverphant/Chorus/releases/latest). Windows offers an installer and a zip, both x64 and unsigned. Linux is under validation; no Linux package is offered yet.
+[Download the latest release](https://github.com/Hesio-Riverphant/Chorus/releases/latest). Windows offers an installer and a zip, both x64 and unsigned. Ubuntu offers a `.deb` and a zip.
 
 To uninstall, use **Uninstall Chorus** in the Start menu, or extract the matching uninstall launcher package and run `Uninstall Chorus.cmd`. It opens the registered uninstaller and retains chat data. For the portable edition, close the app and delete its extracted directory.
+
+On Ubuntu, install the recommended `.deb`, then open Chorus from the application menu:
+
+```sh
+sudo apt install ./Chorus-0.5.1-linux-amd64.deb
+# Uninstall while retaining chat data
+sudo apt remove chorus
+```
+
+For the Ubuntu zip, extract the complete archive and run these commands from its directory once to configure the Chromium sandbox, then launch. Run the app as a normal user.
+
+```sh
+sudo chown root:root chrome-sandbox
+sudo chmod 4755 chrome-sandbox
+./chorus
+```
+
+Both platforms pass automated UI and packaged-startup checks. Ubuntu 24.04 CI also verifies installation and removal. Individual desktop environments and Agent accounts require separate validation.
 
 ## How it works
 
@@ -42,6 +60,7 @@ Model lists show native configuration or provider results. Account access and a 
 ## Data and settings
 
 - Windows data: `%APPDATA%/agent-room`. Close the app before backing up the entire directory. Upgrades retain chats; uninstalling retains data.
+- Linux data: `${XDG_CONFIG_HOME:-~/.config}/agent-room`.
 - Regular rooms share member profiles. Side chats can be edited independently after creation. A member's working directory overrides the room directory, followed by the default directory.
 - MCP/plugin settings use agent defaults and room member overrides. Skill registration references original files.
 - Set cached input, uncached input and output prices per agent/model, with optional peak and off-peak schedules. Missing native usage stays unknown.
