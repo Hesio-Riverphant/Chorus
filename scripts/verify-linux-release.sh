@@ -20,6 +20,8 @@ sudo chmod 4755 "$zip_dir/chrome-sandbox"
 node scripts/package-desktop.js --smoke-existing "$zip_dir"
 trap 'sudo dpkg -r chorus' EXIT
 sudo apt-get install -y "$deb_file"
+test "$(stat -c '%a' /opt/Chorus)" = 755
+test "$(stat -c '%U' /opt/Chorus)" = root
 dpkg-query -L chorus | sed -n '1,25p; /RELEASE-MANIFEST/p; /\/chorus$/p'
 if [[ ! -f /opt/Chorus/RELEASE-MANIFEST.json ]]; then
   dpkg-deb --contents "$deb_file" | sed -n '1,20p; /RELEASE-MANIFEST/p; /\/chorus$/p'

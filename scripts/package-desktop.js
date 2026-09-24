@@ -137,6 +137,9 @@ function build({ sourceRoot = path.resolve(__dirname, '..'), outputRoot = path.j
   const kind = sourceOnly ? 'source' : 'desktop';
   const prefix = sourceOnly ? `Chorus-${manifest.version}-source-` : `Chorus-${manifest.version}-${process.platform}-x64-`;
   const output = fs.mkdtempSync(path.join(outputRoot, prefix));
+  // mkdtemp defaults to 0700. FPM preserves this directory as root-owned
+  // /opt/Chorus, so desktop distributions must be traversable by normal users.
+  if (!sourceOnly && process.platform === 'linux') fs.chmodSync(output, 0o755);
   if (sourceOnly) {
     for (const file of publicationFiles(sourceRoot)) copyFile(sourceRoot, output, file);
   } else {
