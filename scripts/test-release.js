@@ -148,6 +148,7 @@ test('installer packaging enforces native platform and keeps app data on uninsta
   const config = builderConfiguration(path.resolve(__dirname, '..'), 'fixture-output');
   assert.equal(config.nsis.perMachine, false);
   assert.equal(config.nsis.deleteAppDataOnUninstall, false);
+  assert.equal(config.nsis.uninstallDisplayName, 'Chorus');
   assert.equal(config.nsis.runAfterFinish, false);
   assert.deepEqual(config.win.target, ['nsis', 'zip']);
   assert.deepEqual(config.linux.target, ['deb', 'zip']);

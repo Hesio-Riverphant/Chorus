@@ -245,7 +245,7 @@ test('internal connection probe disables resume, forces read-only and adds provi
     assert.ok(!args.includes('--dangerously-bypass-approvals-and-sandbox'));
     assert.ok(!args.includes('--auto'));
     if (cliType === 'claude') {
-      assert.equal(args[args.indexOf('--tools') + 1], '""');
+      assert.equal(args[args.indexOf('--tools') + 1], process.platform === 'win32' ? '""' : '');
       assert.ok(args.includes('--no-session-persistence'));
       assert.ok(args.includes('--strict-mcp-config'));
       assert.equal(args[args.indexOf('--permission-mode') + 1], 'dontAsk');

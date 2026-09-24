@@ -16,7 +16,9 @@ const { normalizeLayout, registerWorkbench } = require('../src/main/workbench');
 function fixture(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'convoke-workbench-test-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  return directory;
+  // Production IPC obtains this canonical root through roomDirectory. Windows
+  // runners may expose TEMP with an 8.3 alias, unlike realpath/Git output.
+  return fs.realpathSync(directory);
 }
 function git(cwd, args) { return execFileSync('git', args, { cwd, windowsHide: true, encoding: 'utf8' }); }
 
