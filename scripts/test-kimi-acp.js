@@ -5,11 +5,16 @@ const { EventEmitter } = require('node:events');
 const { PassThrough, Writable } = require('node:stream');
 const { runKimiAcp } = require('../src/main/adapters/kimiAcp');
 
-function fixture({ levels = ['off', 'on'], mismatch = false, wait = false, failure = false, fullActivities = false } = {}) {
+function fixture({ levels = ['off', 'on'], mismatch = false, wait = false, failure = false, fullActivities = false, splitBom = false, finalTail = false, exitCode = 0 } = {}) {
   const requests = [], child = new EventEmitter();
   child.stdout = new PassThrough(); child.stderr = new PassThrough();
   child.kill = () => { queueMicrotask(() => child.emit('close', 0)); };
-  function send(value) { child.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...value }) + '\n'); }
+  let first = true;
+  function send(value) {
+    const wire = Buffer.from((first && splitBom ? '\uFEFF' : '') + JSON.stringify({ jsonrpc: '2.0', ...value }) + (finalTail && value.result?.stopReason ? '' : '\n')); first = false;
+    if (splitBom) for (const byte of wire) child.stdout.write(Buffer.from([byte])); else child.stdout.write(wire);
+    if (finalTail && value.result?.stopReason) child.emit('close', exitCode);
+  }
   const configuration = value => ({ configOptions: [{ id: 'thinking', currentValue: value, options: levels.map(value => ({ value })) }] });
   child.stdin = new Writable({ write(buffer, _encoding, callback) {
     const request = JSON.parse(buffer.toString()); requests.push(request); callback();
@@ -89,4 +94,17 @@ test('a full activity list preserves Kimi process prose in the body without disc
   const result = await f.start('on').handle.promise;
   assert.equal(result.error, null);
   assert.equal(result.text, 'CheckingFinal answer');
+});
+
+
+test('Kimi accepts split UTF8 BOM and completed final response without newline', async () => {
+  const f = fixture({ splitBom: true, finalTail: true });
+  const result = await f.start('on').handle.promise;
+  assert.equal(result.error, null); assert.equal(result.text, 'Final answer');
+});
+
+
+test('Kimi nonzero exit cannot turn a buffered final response into success', async () => {
+  const f = fixture({ finalTail: true, exitCode: 1 });
+  assert.ok((await f.start('on').handle.promise).error);
 });

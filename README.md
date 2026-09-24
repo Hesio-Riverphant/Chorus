@@ -8,20 +8,20 @@ Chorus 是本地桌面应用，连接已安装的 Agent CLI。把不同模型加
 
 ## 开始使用
 
-需要 **Windows 11 x64 或 Ubuntu 24.04 x64**，以及至少一个已安装、已登录的 Agent CLI。安装包内置桌面运行环境，无需另装 Node.js。
+需要 **Windows 10（1809+）/11 x64 或 Ubuntu 24.04 x64**，以及至少一个已安装、已登录的 Agent CLI。x64 包适用于 Intel/AMD 的 x86-64 处理器；Windows 11 已实测，Windows 10 尚未实机验收。安装包内置桌面运行环境，无需另装 Node.js。
 
-1. 运行 `Chorus-0.5.1-windows-x64-setup.exe` 安装，或完整解压同版本 zip 后运行 `Chorus.exe`。
+1. 运行 `Chorus-0.6.0-windows-x64-setup.exe` 安装，或完整解压同版本 zip 后运行 `Chorus.exe`。
 2. 打开 **设置 → Agent 接入**，扫描并启用 Agent；创建成员，获取模型列表并测试连接。
 3. 新建房间，选择项目目录和成员，输入任务。调用过程中可以查看工具、文件变更、用量，也可以随时停止。
 
 [下载安装包](https://github.com/Hesio-Riverphant/Chorus/releases/latest)。Windows 提供安装器和 zip，均为 x64，包未签名；Ubuntu 提供 `.deb` 和 zip。
 
-卸载可使用开始菜单中的 **Uninstall Chorus**，或下载同版本卸载启动包、解压后运行 `Uninstall Chorus.cmd`；它会打开系统登记的卸载程序，聊天数据保留。便携版退出后删除解压目录即可。
+卸载可使用开始菜单中的 **Uninstall Chorus**，或运行包内 `Uninstall Chorus.cmd`；也提供独立卸载启动 zip。它会打开系统登记的安装版卸载程序，聊天数据保留。便携版退出后删除解压目录即可。
 
 Ubuntu 推荐安装 `.deb`，然后从应用菜单打开 Chorus：
 
 ```sh
-sudo apt install ./Chorus-0.5.1-linux-amd64.deb
+sudo apt install ./Chorus-0.6.0-linux-amd64.deb
 # 卸载，保留聊天数据
 sudo apt remove chorus
 ```
@@ -50,6 +50,8 @@ Chat 用于日常会话；Plan 和 Goal 交给支持这些模式的原生 Agent 
 `选择项目 → 加入成员 → 发出任务 → 查看过程与结论`
 
 用 `/` 查看当前可用命令；`/model` 调整成员模型，`/context` 查看原生用量。Ctrl+K 搜索消息和归档。成员互相 @ 的轮数和并行数有上限，可在接力控制中调整。
+
+Codex 和 Claude 的原生授权、提问会显示为卡片。问题等待 30 分钟后保留，点击“回答问题”可启动续接；“始终允许”仅作用于本次原生会话。设置里的用量软预算在收到回报后停止派新任务，已开始的任务继续完成。
 
 ## 是否适合
 

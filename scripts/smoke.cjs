@@ -306,6 +306,8 @@ async function run() {
   await require('./chorus-ui-checks.cjs')({ win, persistence, check });
   await require('./skill-source-ui-checks.cjs')({ win, persistence, check });
   await require('./history-ui-checks.cjs')({ win, persistence, check });
+  await require('./role-avatar-ui-checks.cjs')({ win, persistence, check });
+  await require('./runtime-input-ui-checks.cjs')({ win, persistence, check });
 
   const runtimeErrors = await win.webContents.executeJavaScript('({errors:window.__caught || [], rejections:window.__unhandled || []})');
   check('真实界面操作无未处理脚本异常', !runtimeErrors.errors.length && !runtimeErrors.rejections.length);

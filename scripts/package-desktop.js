@@ -148,6 +148,7 @@ function build({ sourceRoot = path.resolve(__dirname, '..'), outputRoot = path.j
     for (const file of runtimeFiles) copyFile(runtimePath, output, file,
       file === 'electron.exe' ? 'Chorus.exe' : file === 'electron' ? 'chorus' : file === 'LICENSE' ? 'LICENSE.electron.txt' : file);
     if (process.platform === 'win32') {
+      for (const file of ['Uninstall Chorus.cmd', 'uninstall-chorus.ps1']) copyFile(sourceRoot, output, `scripts/${file}`, file);
       const iconResult = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-File',
         path.join(sourceRoot, 'scripts/set-windows-icon.ps1'), '-Executable', path.join(output, 'Chorus.exe'),
         '-Icon', path.join(sourceRoot, 'src/renderer/assets/convoke.ico')], { windowsHide: true, timeout: 30000, encoding: 'utf8' });

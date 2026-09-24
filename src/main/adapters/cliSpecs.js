@@ -11,14 +11,14 @@ const { claudeText } = require('./claudeText');
 // Per-CLI definitions: how to build arguments and parse NDJSON output.
 // Prompt delivery: 'stdin' (preferred, avoids quoting/length limits) or 'arg'.
 
-function permissionFlagsClaude(mode) {
+function permissionFlagsClaude(mode, interactive = false) {
   switch (mode) {
     case PermissionMode.FULL:
       return ['--permission-mode', 'bypassPermissions'];
     case PermissionMode.READ_ONLY:
       // Tool restriction, not an OS sandbox. Explicitly deny MCP tools since
       // a user's native allowlist can otherwise approve a mutating MCP tool.
-      return ['--permission-mode', 'dontAsk', '--tools', 'Read,Grep,Glob', '--disallowedTools', 'mcp__*'];
+      return ['--permission-mode', interactive ? 'manual' : 'dontAsk', '--tools', interactive ? 'Read,Grep,Glob,AskUserQuestion' : 'Read,Grep,Glob', '--disallowedTools', 'mcp__*'];
     case PermissionMode.WORKSPACE:
     default:
       // Windows has no OS sandbox; acceptEdits auto-approves file edits.
@@ -28,10 +28,11 @@ function permissionFlagsClaude(mode) {
 
 function claudeArgs(bot, sessionId) {
   let args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--forward-subagent-text'];
-  if (bot.executionMode === 'goal') args.push('--input-format', 'stream-json', '--permission-prompts', 'none');
+  // The host target selects who answers; stdio selects the control transport.
+  args.push('--input-format', 'stream-json', '--permission-prompts', 'host', '--permission-prompt-tool', 'stdio');
   args = args.concat(normalizeExecutionMode('claude', bot.executionMode) === 'plan'
     ? ['--permission-mode', 'plan', ...(bot.permissionMode === PermissionMode.READ_ONLY
-      ? ['--tools', 'Read,Grep,Glob', '--disallowedTools', 'mcp__*'] : [])] : permissionFlagsClaude(bot.permissionMode));
+      ? ['--tools', 'Read,Grep,Glob,AskUserQuestion', '--disallowedTools', 'mcp__*'] : [])] : permissionFlagsClaude(bot.permissionMode, true));
   if (bot.model) args.push('--model', bot.model);
   const effort = normalizeEffort('claude', bot.reasoningEffort, bot.model);
   if (effort) args.push('--effort', effort);

@@ -147,7 +147,7 @@ test('normal Codex chat uses native temporary RPC with cwd, model, effort and in
   assert.equal(f.factoryOptions.cwd, process.cwd());
   assert.deepEqual(f.factoryOptions.cliSettings.enabledCliIds, ['codex']);
   assert.deepEqual(f.calls[0], { method: 'thread/start', params: { cwd: process.cwd(), ephemeral: true,
-    approvalPolicy: 'never', sandbox: 'workspace-write', model: 'model-test', allowProviderModelFallback: false } });
+    approvalPolicy: 'on-request', sandbox: 'workspace-write', model: 'model-test', allowProviderModelFallback: false } });
   assert.deepEqual(f.calls[1].params, { threadId: 'thread-chat', input: [{ type: 'text', text: 'Current input' }], effort: 'high' });
   f.send('thread/tokenUsage/updated', { tokenUsage: { total: { inputTokens: 80000, outputTokens: 120, totalTokens: 80120, cachedInputTokens: 60000 },
     last: { inputTokens: 20000, outputTokens: 40, totalTokens: 20040, cachedInputTokens: 15000 }, modelContextWindow: 256000 } });

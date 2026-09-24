@@ -24,7 +24,7 @@ const ConversationQueries = {
     const end = active ? now : run.endedAt;
     const seconds = Number.isFinite(end) ? Math.floor(Math.max(0, end - run.startedAt) / 1000) : null;
     const elapsed = seconds === null ? ConversationI18n.t('未记录完整耗时') : ConversationI18n.tpl`用时 ${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
-    const status = { running: ConversationI18n.t('运行中'), stopping: ConversationI18n.t('正在停止'), stopped: ConversationI18n.t('已取消'), done: ConversationI18n.t('已结束'), error: ConversationI18n.t('失败'), budget: ConversationI18n.t('达到接力上限'), interrupted: ConversationI18n.t('意外中断') }[run.status] || run.status;
+    const status = { running: ConversationI18n.t('运行中'), stopping: ConversationI18n.t('正在停止'), stopped: ConversationI18n.t('已取消'), done: ConversationI18n.t('已结束'), error: ConversationI18n.t('失败'), budget: ConversationI18n.t('达到派发上限'), interrupted: ConversationI18n.t('意外中断') }[run.status] || run.status;
     return { label: `${elapsed} · ${status}`, active };
   },
   processState(roundId, list, autoCollapse, override) {

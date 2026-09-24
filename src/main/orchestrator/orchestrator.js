@@ -9,12 +9,14 @@ const { runBot } = require('../adapters/cliAdapter');
 const { requireAppOnly, requireEnabled } = require('../cliRegistry');
 const { upsertActivity } = require('../adapters/activities');
 const { calculateCost } = require('./pricing');
+const UsageBudget = require('./usageBudget');
 const { resolveTargets } = require('./router');
 const { buildPrompt, isTranscriptMessage, selectTranscript } = require('./transcript');
 const references = require('../skills/skillReferences');
 const nativeCapabilities = require('../nativeCapabilities');
 const { normalizeMode } = require('../../shared/conversationMode');
 const { normalizeExecutionMode } = require('../../shared/reasoning');
+const { validateAnswers } = require('../adapters/inputAnswers');
 const { parseMentions } = require('../../shared/mention');
 const { estimateTokens, uid } = require('../../shared/util');
 const {
@@ -33,12 +35,45 @@ class Orchestrator {
   }
 
   setEmitter(fn) { this.emit = fn; }
-  getPendingInputs() { return [...this.pendingInputs.values()]; }
+  getPendingInputs(roomId) {
+    const live = [...this.pendingInputs.values()];
+    if (!roomId) return live;
+    const deferred = persistence.getMessages(roomId).filter(message => !message.supersededBy).flatMap(message =>
+      (message.deferredInputs || []).filter(input => input.status === 'deferred').map(input => ({
+        ...input, kind: 'input_request', roomId, messageId: message.id, botId: message.authorId,
+      })));
+    return [...live.filter(input => input.roomId === roomId), ...deferred];
+  }
 
   respondInput({ roomId, messageId, requestId, answers }) {
     const entry = this.inputHandles.get(messageId);
-    if (!entry || entry.roomId !== roomId || !this.isBusy(roomId)) throw new Error(I18n.t('该问题已结束，请刷新聊天'));
-    return entry.handle.respondInput(requestId, answers);
+    if (entry && entry.roomId === roomId && this.isBusy(roomId)) return entry.handle.respondInput(requestId, answers);
+    if (this.isBusy(roomId)) throw new Error(I18n.t('房间仍在运行，请先停止或等待完成'));
+    const message = persistence.getMessage(roomId, messageId);
+    const input = message?.deferredInputs?.find(value => value.requestId === requestId && value.status === 'deferred');
+    if (!input || message.supersededBy) throw new Error(I18n.t('该问题已结束，请刷新聊天'));
+    const response = validateAnswers(input.questions, answers);
+    const room = persistence.listRooms().find(value => value.id === roomId);
+    if (!room || room.archivedAt) throw new Error(I18n.t('请先恢复归档房间'));
+    const bot = this.roomMembers(room).find(value => value.id === message.authorId && value.enabled !== false);
+    if (!bot) throw new Error(I18n.t('该成员已不在房间或已禁用'));
+    const original = persistence.getMessage(roomId, message.roundId)?.text || '';
+    const text = `@${bot.name}\n` + I18n.t('继续之前等待回答的任务。先核对已完成的操作，避免重复执行。') + '\n' +
+      JSON.stringify({ originalRequest: original, partialResponse: message.text || '',
+        answers: input.questions.map(question => ({ question: question.question, answer: response[question.id].answers })) });
+    // A closed native process cannot be resumed invisibly. Start an explicit,
+    // targeted continuation and retain the prior transcript and partial output.
+    const operation = this.handleHuman(roomId, text, { targetBotId: bot.id, mode: message.mode || bot.executionMode });
+    const patch = { deferredInputs: message.deferredInputs.map(value => value.requestId === requestId ? { ...value, status: 'answered' } : value) };
+    persistence.updateMessage(roomId, messageId, patch);
+    this.emit({ kind: 'message_update', roomId, id: messageId, patch });
+    this.emit({ kind: 'input_resolved', roomId, messageId, requestId });
+    return operation.catch(error => {
+      const restored = { deferredInputs: message.deferredInputs.map(value => value.requestId === requestId ? { ...value, status: 'deferred' } : value) };
+      persistence.updateMessage(roomId, messageId, restored);
+      this.emit({ kind: 'message_update', roomId, id: messageId, patch: restored });
+      throw error;
+    });
   }
 
   isBusy(roomId) { return roomId ? this.runs.has(roomId) : this.runs.size > 0; }
@@ -73,8 +108,11 @@ class Orchestrator {
     if (this.isBusy(roomId)) throw new Error(I18n.t('房间仍在运行，请先停止或等待完成'));
     const room = persistence.listRooms().find((r) => r.id === roomId);
     if (!room) return;
+    if (room.archivedAt) throw new Error(I18n.t('请先恢复归档房间'));
     const mode = normalizeMode(options.mode);
-    const modeTargetIds = this.validateModeTargets(room, text, mode);
+    const explicitTarget = options.targetBotId && this.roomMembers(room).find(bot => bot.id === options.targetBotId && bot.enabled !== false);
+    if (options.targetBotId && !explicitTarget) throw new Error(I18n.t('该成员已不在房间或已禁用'));
+    const modeTargetIds = this.validateModeTargets(room, explicitTarget ? `@${explicitTarget.name}` : text, mode);
 
     const human = {
       id: uid('msg_'),
@@ -82,6 +120,7 @@ class Orchestrator {
       authorType: AuthorType.HUMAN,
       authorId: 'owner',
       text,
+      ...(options.targetBotId ? { targetBotId: options.targetBotId } : {}),
       ...(mode ? { mode, modeTargetIds } : {}),
       mentions: [],
       status: MessageStatus.DONE,
@@ -107,17 +146,21 @@ class Orchestrator {
     }
     const text = human.text;
     const mode = normalizeMode(human.mode);
-    const modeTargetIds = this.validateModeTargets(room, text, mode);
+    const explicitTarget = human.targetBotId && this.roomMembers(room).find(bot => bot.id === human.targetBotId && bot.enabled !== false);
+    if (human.targetBotId && !explicitTarget) throw new Error(I18n.t('该成员已不在房间或已禁用'));
+    const modeTargetIds = this.validateModeTargets(room, explicitTarget ? `@${explicitTarget.name}` : text, mode);
     if (mode) {
       persistence.updateMessage(roomId, human.id, { mode, modeTargetIds });
       this.emit({ kind: 'message_update', roomId, id: human.id, patch: { mode, modeTargetIds } });
     }
 
-    const { targets, via } = resolveTargets({
+    const resolved = resolveTargets({
       text, mode,
       bots: this.roomMembers(room),
       room,
     });
+    const targets = human.targetBotId ? this.roomMembers(room).filter(bot => bot.id === human.targetBotId && bot.enabled !== false) : resolved.targets;
+    const via = human.targetBotId ? 'mention' : resolved.via;
 
     const run = {
       id: uid('run_'),
@@ -135,6 +178,7 @@ class Orchestrator {
       via,
       skillBlocks: this.skillBlocksForText(text),
     };
+    this.initializeBudget(run);
     run.finished = new Promise((resolve) => { run.resolveFinished = resolve; });
     this.runs.set(roomId, run);
 
@@ -234,6 +278,7 @@ class Orchestrator {
       status: RunStatus.RUNNING, stopping: false, active: new Set(),
       wave: 0, ...modeState,
     };
+    this.initializeBudget(run);
     run.finished = new Promise((resolve) => { run.resolveFinished = resolve; });
     this.runs.set(roomId, run);
     try { this.emitRun(run); }
@@ -403,13 +448,50 @@ class Orchestrator {
 
   guardNote(run, text) { this.systemNote(run, text); }
 
-  canDispatch(run, pending) {
-    if (run.stopping || run.status !== RunStatus.RUNNING) return false;
+  initializeBudget(run) {
+    const tokenLimit = this.setting('tokenBudgetPerRun'), costLimit = this.setting('costBudgetPerRun');
+    run.budgetLimits = {
+      tokenLimit: Number.isSafeInteger(tokenLimit) && tokenLimit > 0 ? tokenLimit : 0,
+      costLimit: Number.isFinite(costLimit) && costLimit > 0 ? costLimit : 0,
+    };
+    // Retries keep the original human round's spend, including failed/superseded
+    // attempts. A new human message starts a separate allowance in this room.
+    run.budgetEntries = new Map(persistence.getMessages(run.roomId)
+      .filter(message => message.authorType === AuthorType.BOT && message.roundId === run.roundId)
+      .map(message => [message.id, message.budgetUsage || {
+        tokens: message.usage && message.usage.inputEstimated === false && message.usage.outputEstimated === false &&
+          Number.isSafeInteger(message.usage.tokens) && message.usage.tokens >= 0 ? message.usage.tokens : null,
+        cost: message.costInfo?.costSource && message.costInfo.costSource !== 'none' ? message.costInfo.cost : null,
+      }]));
+  }
+
+  budgetSnapshot(run) {
+    return UsageBudget.summary(run.budgetEntries?.values() || [], run.budgetLimits || {});
+  }
+
+  recordBudgetUsage(run, message, bot, usage, prices) {
+    if (!run.budgetEntries) this.initializeBudget(run);
+    const previous = run.budgetEntries.get(message.id) || {};
+    const reported = UsageBudget.reportedUsage(usage || {}, bot, message.createdAt, prices);
+    // A final response may omit counters already reported by streaming events.
+    const budgetUsage = { tokens: reported.tokens ?? previous.tokens ?? null,
+      cost: reported.cost ?? previous.cost ?? null,
+      costSource: reported.cost != null ? reported.costSource : previous.costSource || 'none' };
+    run.budgetEntries.set(message.id, budgetUsage);
+    persistence.updateMessage(run.roomId, message.id, { budgetUsage });
+    return budgetUsage;
+  }
+
+  canDispatch(run, pending, reserved = false) {
+    if (run.stopping || !(reserved ? [RunStatus.RUNNING, RunStatus.BUDGET] : [RunStatus.RUNNING]).includes(run.status)) return false;
     let reason;
-    if (run.calls >= this.setting('maxCliCallsPerRun')) reason = I18n.t('已达每次 run 最大 CLI 调用数');
+    if (!reserved && run.calls >= this.setting('maxCliCallsPerRun')) reason = I18n.t('已达每次 run 最大 CLI 调用数');
+    const budget = this.budgetSnapshot(run);
+    if (!reason && budget.tokenLimit > 0 && budget.reportedTokens >= budget.tokenLimit) reason = I18n.t('已报告 Token 达到本轮软上限');
+    if (!reason && budget.costLimit > 0 && budget.reportedCost >= budget.costLimit) reason = I18n.t('已报告用量费用达到本轮软上限');
     if (!reason) return true;
     run.status = RunStatus.BUDGET;
-    this.guardNote(run, systemText`已达每次 run 最大 CLI 调用数；未发言：${pending.map((b) => b.name).join('、')}`);
+    this.guardNote(run, systemText`${reason}；未发言：${pending.map((b) => b.name).join('、')}。已开始的任务继续完成。`);
     return false;
   }
 
@@ -450,7 +532,7 @@ class Orchestrator {
     if (!Number.isFinite(run.startedAt)) run.startedAt = Date.now();
     const human = persistence.getMessage(run.roomId, run.roundId);
     if (human?.authorType === AuthorType.HUMAN && (human.roundRun?.id !== run.id || run.endedAt)) {
-      const roundRun = { id: run.id, startedAt: run.startedAt, endedAt: run.endedAt || null, status: run.status };
+      const roundRun = { id: run.id, startedAt: run.startedAt, endedAt: run.endedAt || null, status: run.status, budget: this.budgetSnapshot(run) };
       if (JSON.stringify(human.roundRun) !== JSON.stringify(roundRun)) {
         // Persist boundaries immediately; elapsed display must survive a clean restart.
         persistence.updateMessage(run.roomId, human.id, { roundRun, status: human.status });
@@ -466,9 +548,10 @@ class Orchestrator {
 
   runSnapshot(run) {
     return {
-      id: run.id, status: run.status, wave: run.wave, calls: run.calls,
+      id: run.id, status: run.status === RunStatus.BUDGET && !run.endedAt ? RunStatus.RUNNING : run.status,
+      dispatchStopped: run.status === RunStatus.BUDGET, wave: run.wave, calls: run.calls,
       roundId: run.roundId, startedAt: run.startedAt, endedAt: run.endedAt || null,
-      tokens: run.tokens, cost: run.cost, stopping: run.stopping,
+      tokens: run.tokens, cost: run.cost, stopping: run.stopping, budget: this.budgetSnapshot(run),
       mode: run.mode || 'chat', modeTargetIds: run.modeTargetIds || [],
     };
   }
@@ -535,6 +618,7 @@ class Orchestrator {
       createdAt: Date.now(),
     };
     persistence.addMessage(run.roomId, message);
+    run.budgetEntries?.set(message.id, { tokens: null, cost: null });
     run.calls += 1;
     this.emit({ kind: 'message_add', roomId: run.roomId, message });
     this.emitRun(run);
@@ -567,6 +651,7 @@ class Orchestrator {
       } else extensions = { nativeArgs: [], nativeConfig: null, cleanup() {} };
       for (const warning of extensions.warnings || []) this.systemNote(run, `${bot.name}：${warning}`);
       if (run.stopping) throw new Error(I18n.t('运行已停止'));
+      if (!this.canDispatch(run, [bot], true)) throw new Error(I18n.t('本轮已停止派发新任务'));
       handle = runBot({
         bot,
         prompt,
@@ -597,6 +682,8 @@ class Orchestrator {
           persistence.updateMessage(run.roomId, message.id, { contextUsage: payload });
           this.emit({ kind: 'message_update', roomId: run.roomId, id: message.id, patch: { contextUsage: payload } });
         } else if (type === RoomEvent.USAGE) {
+          this.recordBudgetUsage(run, message, bot, payload, agentPricing);
+          this.emitRun(run);
           persistence.updateMessage(run.roomId, message.id, { usage: payload });
           this.emit({ kind: 'message_update', roomId: run.roomId, id: message.id, patch: { usage: payload } });
         } else if (type === 'text_replace' || type === 'final_answer') {
@@ -631,14 +718,23 @@ class Orchestrator {
 
     // Cancellation suppresses streaming events, but a native goal pause response
     // remains authoritative and must replace the last in-flight active state.
+    if (result.cleanupWarning) this.systemNote(run, `${bot.name}：${result.cleanupWarning}`);
+    if (result.deferredInputs?.length && !run.stopping) {
+      const patch = { deferredInputs: result.deferredInputs };
+      persistence.updateMessage(run.roomId, message.id, patch);
+      this.emit({ kind: 'message_update', roomId: run.roomId, id: message.id, patch });
+      for (const input of result.deferredInputs) this.emit({ ...input, kind: 'input_request', roomId: run.roomId,
+        messageId: message.id, botId: bot.id });
+    }
     if (result.goal) {
       persistence.updateMessage(run.roomId, message.id, { goal: result.goal });
       this.emit({ kind: 'message_update', roomId: run.roomId, id: message.id, patch: { goal: result.goal } });
     }
 
-    // Compute usage / cost. Tokens are reliable; monetary cost is only derived
-    // when the user asks for it (CLI report or custom unit prices).
+    // Display can estimate missing token counts; the independent budget ledger
+    // uses native reports only and retains explicit unknown counters.
     const u = result.usage || {};
+    this.recordBudgetUsage(run, message, bot, u, agentPricing);
     const nativeUsage = Object.fromEntries(['cachedInputTokens', 'cacheCreationInputTokens', 'reasoningTokens'].filter(key => Number.isSafeInteger(u[key]) && u[key] >= 0).map(key => [key, u[key]]));
     nativeUsage.inputEstimated = !Number.isSafeInteger(u.inputTokens) || u.inputTokens < 0;
     nativeUsage.outputEstimated = !Number.isSafeInteger(u.outputTokens) || u.outputTokens < 0;

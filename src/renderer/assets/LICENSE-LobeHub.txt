@@ -26,3 +26,7 @@ claude.svg: packages/static-svg/icons/claude.svg
 codex.svg: packages/static-svg/icons/openai.svg (OpenAI symbol identifying the Codex CLI)
 kimi.svg: packages/static-svg/icons/kimi.svg
 These marks identify CLI sources. No endorsement is implied.
+
+Additional files from the same pinned source commit:
+deepseek.svg, gemini.svg, qwen.svg, githubcopilot.svg, cursor.svg, codebuddy.svg, opencode.svg, zai.svg: packages/static-svg/icons/<filename>
+DeepSeek fill uses its brand blue #4D6BFE. Z.ai identifies the ZCode provider.

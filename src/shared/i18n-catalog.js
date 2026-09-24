@@ -1,6 +1,29 @@
 'use strict';
 // Application-owned UI text. User content and native agent output never enter this catalog.
 (function(root,factory){if(typeof module==='object'&&module.exports)module.exports=factory();else root.I18nCatalog=factory();})(typeof globalThis!=='undefined'?globalThis:this,()=>({
+  "{0} 请求授权": "{0} requests approval",
+  "始终允许仅适用于本次原生会话；超时自动拒绝。": "Always allow applies only to this native session. Expired requests are declined.",
+  "允许一次": "Allow once",
+  "本次会话始终允许": "Always allow for this session",
+  "拒绝": "Deny",
+  "等待已结束。回答后将新建一次续接调用，并核对之前的执行结果。": "The wait has ended. Answering starts a continuation that checks previous results before proceeding.",
+  "回答问题": "Answer question",
+  "已停止派发，等待运行任务完成": "Dispatch stopped; waiting for active tasks",
+  "头像须跟随 CLI、使用最多 8 字文字，或不超过 256 KB 的 PNG/JPEG/WebP 图片": "Use the CLI icon, up to 8 text characters, or a PNG/JPEG/WebP image up to 256 KB.",
+  "彩蛋 · DeepSeek": "Easter egg · DeepSeek",
+  "选择选项或填写其他回答": "Choose an option or enter your own answer",
+  "已报告 {0} / {1} Token": "Reported {0} / {1} tokens",
+  " 已计费用 ${0} / ${1}": " Cost recorded ${0} / ${1}",
+  "（用量未知 {0} 次，费用未知 {1} 次）": " ({0} calls with unknown usage, {1} with unknown cost)",
+
+  "每轮已报告 Token 软上限（0 = 不限）": "Reported token soft limit per round (0 = unlimited)",
+  "每轮费用软上限 USD（0 = 不限）": "Cost soft limit per round in USD (0 = unlimited)",
+  "达到软上限后仅停止派发新任务，已开始的任务继续完成，因此可能超额。按原生已报告用量与已配置单价或 CLI 费用计算；未知用量不视为零，不用文本估算阻止任务。每个房间独立，新的人类消息重新计额，重试延续原轮次。": "At the soft limit, only new tasks stop dispatching. Active tasks finish and may exceed the limit. Counts use native reported usage and configured rates or CLI cost; unknown usage stays unknown and text estimates never block work. Each room is independent. A new human message starts a new allowance; retries retain the original round.",
+  "软预算须为有效非负数，Token 须为整数": "Soft limits must be finite non-negative numbers; tokens must be a whole number.",
+  "已报告 Token 达到本轮软上限": "Reported tokens reached this round’s soft limit",
+  "已报告用量费用达到本轮软上限": "Reported usage cost reached this round’s soft limit",
+  "{0}；未发言：{1}。已开始的任务继续完成。": "{0}; not dispatched: {1}. Active tasks will finish.",
+
   "{0}：聊天归档读取失败：{1}": "{0}: Could not read chat archives: {1}",
   "暂无聊天归档。": "No chat archives.",
   "所有房间": "All rooms",
@@ -601,6 +624,7 @@
   "达到原生用量限制": "Native usage limit reached",
   "达到原生预算限制": "Native budget limit reached",
   "达到接力上限": "Turn limit reached",
+  "达到派发上限": "Dispatch limit reached",
   "运行中": "Running",
   "进行中": "In progress",
   "连接成功": "Connection succeeded",

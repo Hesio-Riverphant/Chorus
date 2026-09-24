@@ -568,6 +568,8 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px
 .native-question .field .ghost-btn { margin: 2px 5px 7px 0; padding: 7px 10px; font-size: .857143rem; white-space: normal; text-align: left; }
 .native-question .field input { width: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; background: var(--raised); }
 .native-question .hint:empty { display: none; }
+.native-question pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow: auto; }
+.native-question > .ghost-btn { margin: 6px 8px 6px 0; }
 .settings-body .native-capability small { color: var(--text-2); }
 
 * { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text-2) 35%, transparent) transparent; }
@@ -624,3 +626,9 @@ input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px
 .pricing-schedule h4 { margin-bottom: 12px; }
 
 .about-executable { color: var(--text-2); overflow-wrap: anywhere; white-space: pre-wrap; user-select: text; max-width: 100%; }
+
+.provider-avatar { position: relative; overflow: hidden; }
+.provider-avatar .avatar-fallback { color: var(--text); font-size: .7rem; }
+.provider-avatar img { position: absolute; inset: 0; margin: auto; background: var(--logo-bg); }
+.provider-avatar.custom-avatar img { width: 100%; height: 100%; object-fit: cover; filter: none; }
+.provider-avatar.avatar-easter-egg img { filter: none; }

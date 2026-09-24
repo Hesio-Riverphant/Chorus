@@ -248,7 +248,7 @@ test('internal connection probe disables resume, forces read-only and adds provi
       assert.equal(args[args.indexOf('--tools') + 1], process.platform === 'win32' ? '""' : '');
       assert.ok(args.includes('--no-session-persistence'));
       assert.ok(args.includes('--strict-mcp-config'));
-      assert.equal(args[args.indexOf('--permission-mode') + 1], 'dontAsk');
+      assert.equal(args[args.indexOf('--permission-mode') + 1], 'manual');
     } else if (cliType === 'codex') {
       assert.ok(args.includes('--ephemeral'));
       assert.ok(args.includes('--skip-git-repo-check'));

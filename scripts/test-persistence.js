@@ -659,3 +659,15 @@ test('bot profile rejects malformed model identifiers before persistence', () =>
   }
   assert.equal(normalizeBotProfile({ model: 'provider/model-v1:latest' }).model, 'provider/model-v1:latest');
 });
+
+
+test('reported soft budget limits validate before persistence and survive restart', async t => {
+  const f = fixture(t), store = await f.open();
+  store.saveSettings({ tokenBudgetPerRun: 12345, costBudgetPerRun: 0.125 });
+  for (const patch of [{ tokenBudgetPerRun: -1 }, { tokenBudgetPerRun: 1.5 }, { tokenBudgetPerRun: 1e13 },
+    { costBudgetPerRun: Infinity }, { costBudgetPerRun: -1 }, { costBudgetPerRun: '1' }]) assert.throws(() => store.saveSettings(patch));
+  const reopened = await f.open();
+  assert.equal(reopened.getSettings().tokenBudgetPerRun, 12345); assert.equal(reopened.getSettings().costBudgetPerRun, 0.125);
+  reopened.saveSettings({ tokenBudgetPerRun: null, costBudgetPerRun: 0 });
+  assert.equal(reopened.getSettings().tokenBudgetPerRun, 0);
+});

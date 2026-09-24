@@ -1,11 +1,11 @@
 {
   "name": "chorus",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "A local desktop workspace for conversations between native coding agents.",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test scripts/test-logic.js scripts/test-adapters.js scripts/test-persistence.js scripts/test-orchestrator.js scripts/test-ipc.js scripts/test-skills.js scripts/test-skill-discovery.js scripts/test-lifecycle.js scripts/test-connection.js scripts/test-experience-runtime.js scripts/test-message-format.js scripts/test-theme.js scripts/test-interaction-refinement.js scripts/test-model-catalog.js scripts/test-extra-cli.js scripts/test-executable.js scripts/test-cli-registry.js scripts/test-cli-discovery.js scripts/test-side-chats.js scripts/test-codex-native.js scripts/test-native-capabilities.js scripts/test-release.js scripts/test-maturity-runtime.js scripts/test-maturity-renderer.js scripts/test-native-capability-process.js scripts/test-native-capability-cache.js scripts/test-data-consolidation.js scripts/test-room-navigation.js scripts/test-native-workbench.js scripts/test-workbench.js scripts/test-context-usage.js scripts/test-production-interface.js scripts/test-capability-search.js scripts/test-pricing-tiers.js scripts/test-kimi-native.js scripts/test-kimi-acp.js scripts/test-mainstream-cli.js scripts/test-provider-models.js scripts/test-i18n.js scripts/test-main-i18n.js",
+    "test": "node --test scripts/test-logic.js scripts/test-adapters.js scripts/test-persistence.js scripts/test-orchestrator.js scripts/test-ipc.js scripts/test-skills.js scripts/test-skill-discovery.js scripts/test-lifecycle.js scripts/test-connection.js scripts/test-experience-runtime.js scripts/test-message-format.js scripts/test-theme.js scripts/test-interaction-refinement.js scripts/test-model-catalog.js scripts/test-extra-cli.js scripts/test-executable.js scripts/test-cli-registry.js scripts/test-cli-discovery.js scripts/test-side-chats.js scripts/test-codex-native.js scripts/test-native-capabilities.js scripts/test-release.js scripts/test-maturity-runtime.js scripts/test-maturity-renderer.js scripts/test-native-capability-process.js scripts/test-native-capability-cache.js scripts/test-data-consolidation.js scripts/test-room-navigation.js scripts/test-native-workbench.js scripts/test-workbench.js scripts/test-context-usage.js scripts/test-production-interface.js scripts/test-capability-search.js scripts/test-pricing-tiers.js scripts/test-kimi-native.js scripts/test-kimi-acp.js scripts/test-mainstream-cli.js scripts/test-provider-models.js scripts/test-i18n.js scripts/test-main-i18n.js scripts/test-room-roles-avatar.js scripts/test-claude-input.js",
     "test:ui": "node scripts/run-ui-smoke.js",
     "test:rooms": "node scripts/run-room-ui.js",
     "package:desktop": "node scripts/package-desktop.js --strict",
@@ -15,7 +15,8 @@
     "package:release": "node scripts/package-installers.js",
     "package:win": "node scripts/package-installers.js --platform win32",
     "package:linux": "node scripts/package-installers.js --platform linux",
-    "test:i18n": "node scripts/run-i18n-ui.js"
+    "test:i18n": "node scripts/run-i18n-ui.js",
+    "test:stress": "node --test scripts/test-runtime-stress.js"
   },
   "license": "MIT",
   "devDependencies": {

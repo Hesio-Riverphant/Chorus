@@ -8,6 +8,17 @@ module.exports = async function chorusChecks({ win, persistence, check }) {
     input.value = '7'; const invalid = AppearanceUI.read() === null;
     input.value = '14'; closeAllModals(); return valid && invalid;
   }));
+  check('soft budget controls persist through Apply and reopening', await page(async () => {
+    closeAllModals(); openSettings('guard');
+    document.querySelector('#s_tokenBudget').value = '123'; document.querySelector('#s_costBudget').value = '0.25';
+    await saveSettings(false);
+    const saved = (await window.api.getInitial()).settings;
+    closeAllModals(); openSettings('guard');
+    const good = saved.tokenBudgetPerRun === 123 && saved.costBudgetPerRun === 0.25 &&
+      document.querySelector('#s_tokenBudget').value === '123' && document.querySelector('#s_costBudget').value === '0.25';
+    document.querySelector('#s_tokenBudget').value = '0'; document.querySelector('#s_costBudget').value = '0';
+    await saveSettings(false); closeAllModals(); return good;
+  }));
   check('skill reference removal completes without confirmation', await page(async () => {
     closeAllModals(); openSettings('skills'); await loadSkillLibrary();
     const rows = document.querySelectorAll('#skillReferences .skill-row');

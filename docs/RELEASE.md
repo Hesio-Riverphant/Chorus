@@ -1,5 +1,11 @@
 # Chorus release workflow / 发布流程
 
+## 0.6.0 变更
+
+原生 Codex/Claude 授权与提问卡片、超时问题显式续接、仅阻止新派发的用量软预算、进程终止/Unicode 流边界修复、房间主持角色同步和 CLI 头像。Windows 包内附卸载启动器；独立卸载 zip 继续提供。`npm run test:stress` 覆盖真实受控进程的跨房间停止、失败重试和终止竞态，双端 CI 执行。各 Agent 真实账号授权、长期负载与 Windows 10 实机验收仍需单独验证。
+
+Windows 支持范围以当前 Electron 和终端运行要求为准：Windows 10 1809+ / 11、Intel/AMD x86-64；本项目仅发布 x64，未提供 32 位和 ARM64 原生包。
+
 ## 0.5.1 验收范围
 
 Windows 11 x64 完成本地验收，Windows runner 与 Ubuntu 24.04 x64 完成相同源码的自动界面和包启动验收。Ubuntu 还验证 ZIP 沙箱设置、DEB 安装、普通用户启动和卸载。个人桌面硬件、各 Agent 账号及长期使用分别验证；CI 不代表这些场景全部通过。未签名的 Windows 安装器可能触发系统信誉提示。

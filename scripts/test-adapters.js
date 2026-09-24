@@ -45,6 +45,16 @@ function fixture(overrides = {}, spawnCalls = []) {
   return { child, handle, events };
 }
 
+test('oversized stderr never exposes a credential suffix after losing its label', async () => {
+  const logs = [], f = fixture({ log: value => logs.push(value) });
+  const marker = 'synthetic-private-value';
+  f.child.stderr.write('api_key=' + marker.repeat(300));
+  f.child.stderr.write(marker.repeat(200)); f.child.emit('close', 1);
+  const result = await f.handle.promise;
+  assert.match(result.error, /错误输出过长/);
+  assert.ok(!JSON.stringify([logs, f.events, result]).includes(marker));
+});
+
 test('Claude no-tool fallback replaces base read-only tools for native and wrapper launches', async () => {
   for (const launcherFailure of [false, true]) {
     const calls = [];
@@ -329,15 +339,15 @@ test('launch uses the discovered absolute path for agents outside PATH', async (
   assert.equal(calls[0].command, 'C:\\User\\.local\\bin\\codex.exe');
 });
 
-test('Claude read-only uses supported noninteractive permission flags and probes disable its tools once', async () => {
+test('Claude read-only allows host questions without exposing mutation tools and probes disable tools once', async () => {
   for (const probe of [false, true]) {
     const calls = [];
     const { child, handle } = fixture({ bot: { cliType: 'claude', permissionMode: 'read_only' }, probe }, calls);
     child.emit('close', 0); await handle.promise;
     const args = calls[0].args;
-    assert.equal(args[args.indexOf('--permission-mode') + 1], 'dontAsk');
+    assert.equal(args[args.indexOf('--permission-mode') + 1], 'manual');
     assert.equal(args.filter(arg => arg === '--tools').length, 1);
-    assert.equal(args[args.indexOf('--tools') + 1], probe ? '' : 'Read,Grep,Glob');
+    assert.equal(args[args.indexOf('--tools') + 1], probe ? '' : 'Read,Grep,Glob,AskUserQuestion');
     assert.equal(args[args.indexOf('--disallowedTools') + 1], 'mcp__*');
   }
 });
@@ -392,7 +402,7 @@ test('Claude native plan preserves the explicit read-only tool boundary', async 
   const calls = [];
   const f = fixture({ bot: { cliType: 'claude', executionMode: 'plan', permissionMode: 'read_only' } }, calls);
   assert.deepEqual(calls[0].args.slice(calls[0].args.indexOf('--permission-mode'), calls[0].args.indexOf('--permission-mode') + 6),
-    ['--permission-mode', 'plan', '--tools', 'Read,Grep,Glob', '--disallowedTools', 'mcp__*']);
+    ['--permission-mode', 'plan', '--tools', 'Read,Grep,Glob,AskUserQuestion', '--disallowedTools', 'mcp__*']);
   f.child.emit('close', 0); await f.handle.promise;
 });
 
@@ -482,4 +492,47 @@ test('ZCode process receives literal prompt, requires final result and cancels i
   const calls = [];
   assert.throws(() => fixture({ bot: { cliType: 'zcode', permissionMode: 'full' }, probe: true }, calls), /无工具连接测试/);
   assert.equal(calls.length, 0);
+});
+
+
+test('timeout and cancellation never parse late buffered terminal JSON', async () => {
+  for (const cancel of [false, true]) {
+    const { child, handle, events } = fixture({ bot: { cliType: 'qwen', permissionMode: 'full' }, noBytesTimeoutMs: 10 });
+    child.stdout.write(JSON.stringify({ type: 'result', result: 'late result' }));
+    if (cancel) await handle.cancel();
+    else await new Promise(resolve => setTimeout(resolve, 25));
+    child.emit('close', 0);
+    const result = await handle.promise;
+    assert.equal(result.aborted, cancel);
+    assert.equal(result.error, cancel ? null : 'timeout');
+    assert.equal(result.text, '');
+    assert.ok(!events.some(event => event.type === 'final_answer' || event.type === 'done'));
+  }
+});
+
+test('mainstream partial streams cannot certify success without terminal result', async () => {
+  for (const cliType of ['gemini', 'qwen', 'cursor', 'droid']) {
+    const { child, handle } = fixture({ bot: { cliType, permissionMode: 'full' } });
+    const item = cliType === 'gemini' ? { type: 'message', role: 'assistant', content: 'partial' }
+      : { type: 'assistant', message: { content: [{ type: 'text', text: 'partial' }] } };
+    child.stdout.write(JSON.stringify(item) + '\n'); child.emit('close', 0);
+    assert.ok((await handle.promise).error);
+  }
+});
+
+test('plain UTF8 BOM is stripped once and native stderr 429/503 tails remain readable and redacted', async () => {
+  const { child, handle } = fixture({ bot: { cliType: 'pi', permissionMode: 'full' } });
+  const data = Buffer.from('\uFEFF中文 😀');
+  for (const byte of data) child.stdout.write(Buffer.from([byte]));
+  child.emit('close', 0); assert.equal((await handle.promise).text, '中文 😀');
+  for (const code of ['429', '503']) {
+    const logs = [];
+    const f = fixture({ log: value => logs.push(value) }); const tail = Buffer.from(`${code} 中文 unavailable api_key=TEST_SENTINEL_VALUE`);
+    for (const byte of tail) f.child.stderr.write(Buffer.from([byte]));
+    f.child.emit('close', 1); const result = await f.handle.promise;
+    assert.match(result.error, new RegExp(code)); assert.match(result.error, /中文/);
+    assert.ok(!result.error.includes('TEST_SENTINEL_VALUE'));
+    assert.equal(logs.length, 1); assert.ok(!logs[0].includes('TEST_SENTINEL_VALUE'));
+    assert.match(logs[0], /已隐藏/);
+  }
 });

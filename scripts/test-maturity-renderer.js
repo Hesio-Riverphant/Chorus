@@ -36,7 +36,7 @@ function fixture() {
   const context = {
     document: { createElement: tag => new Element(tag), body,
       getElementById: id => ({ messages: main, sideChatMessages: side })[id] },
-    window: { api }, state, SideChatUI: { getRoom: () => state.rooms[1] },
+    window: { api }, state, messages: () => [], SideChatUI: { getRoom: () => state.rooms[1] },
     roomMembers: room => state.bots.filter(bot => room?.botIds.includes(bot.id)),
   };
   vm.createContext(context);

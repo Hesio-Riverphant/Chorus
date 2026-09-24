@@ -2,6 +2,7 @@
 const I18n = require('../../shared/i18n');
 
 const { spawn } = require('node:child_process');
+const { terminateTree } = require('./processTree');
 const { StringDecoder } = require('node:string_decoder');
 const { safeText } = require('./activities');
 const { locateCliExecutable } = require('../cliDiscovery');
@@ -18,10 +19,12 @@ class CodexRpc {
     const launcher = locateCliExecutable('codex', cliSettings) || 'codex';
     if (/[&|<>^%!"\x00-\x1f\x7f]/.test(launcher)) throw new Error(I18n.t('Codex 启动路径包含不支持的字符'));
     this.child = spawnProcess(process.platform === 'win32' && /[\s()]/.test(launcher) ? `"${launcher}"` : launcher, ['app-server', '--stdio'], {
-      cwd, shell: process.platform === 'win32', windowsHide: true,
+      cwd, shell: process.platform === 'win32', windowsHide: true, detached: process.platform !== 'win32',
       env: process.env, stdio: ['pipe', 'pipe', 'pipe'],
     });
     let buffer = '';
+    this.processExited = false;
+    const parseLine = line => { try { this.receive(JSON.parse(line.replace(/^\uFEFF/, ''))); } catch (_) { /* non-protocol diagnostics */ } };
     const decoder = new StringDecoder('utf8');
     this.child.stdout.on('data', chunk => {
       if (this.closed) return;
@@ -32,14 +35,17 @@ class CodexRpc {
       let newline;
       while ((newline = buffer.indexOf('\n')) >= 0) {
         const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
-        try { this.receive(JSON.parse(line)); } catch (_) { /* non-protocol diagnostics */ }
+        parseLine(line);
       }
     });
     // Native diagnostics can contain provider data. Expose only protocol errors.
     this.child.stderr.on('data', () => {});
     this.child.stdin.on('error', error => this.transportError(error));
     this.child.on('error', error => this.transportError(error));
-    this.child.on('close', () => {
+    this.child.on('close', code => {
+      if (this.processExited) return;
+      this.processExited = true;
+      if (!this.closed && code === 0) { buffer += decoder.end(); if (buffer.trim()) parseLine(buffer); }
       this.closed = true;
       this.fail(new Error(I18n.t('Codex 连接已结束')));
       this.publish({ method: 'transport/closed', params: {} });
@@ -97,30 +103,26 @@ class CodexRpc {
     this.pending.clear();
   }
   transportError(error) {
+    if (this.closed) return;
     const safeError = new Error(safeText(error && error.message || I18n.t('Codex 连接失败')));
     this.fail(safeError);
     this.publish({ method: 'transport/error', params: { message: safeError.message } });
+    void this.close();
   }
   async close() {
     if (this.closing) return this.closing;
-    this.closing = new Promise(resolve => {
-      if (this.closed) { resolve(); return; }
-      this.closed = true;
-      this.fail(new Error(I18n.t('Codex 连接已关闭')));
-      // On Windows keep the launcher alive until taskkill has captured its
-      // descendant tree. Ending stdin first can orphan native MCP processes.
-      if (process.platform === 'win32' && Number.isInteger(this.child.pid) && this.child.pid > 0) {
-        const killer = this.spawnProcess('taskkill', ['/pid', String(this.child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-        const timer = setTimeout(() => { killer.kill(); this.child.kill(); resolve(); }, 5000);
-        const done = () => { clearTimeout(timer); this.child.stdin.destroy(); resolve(); };
-        killer.once('close', done);
-        killer.once('error', () => { this.child.kill(); done(); });
-      } else {
-        this.child.stdin.end();
-        this.child.kill('SIGTERM');
-        resolve();
-      }
-    });
+    // Mark closed before terminating: late bytes cannot complete pending work.
+    const alreadyExited = this.processExited;
+    this.closed = true;
+    this.fail(new Error(I18n.t('Codex 连接已关闭')));
+    this.closing = (async () => {
+      const result = !alreadyExited ? await terminateTree(this.child.pid, { spawnProcess: this.spawnProcess,
+        platform: process.platform, killProcess: (pid, signal) => {
+          if (pid === this.child.pid) this.child.kill(signal); else process.kill(pid, signal);
+        } }) : { scope: 'none' };
+      this.child.stdin.destroy();
+      return result;
+    })();
     return this.closing;
   }
 }

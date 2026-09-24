@@ -2,6 +2,7 @@
 const I18n = require('../../shared/i18n');
 
 const { spawn } = require('node:child_process');
+const { terminateTree } = require('./processTree');
 const { StringDecoder } = require('node:string_decoder');
 const { resolveExecutable } = require('./resolveExecutable');
 const { locateCliExecutable } = require('../cliDiscovery');
@@ -21,7 +22,8 @@ function runKimiAcp({ bot, prompt, workspace, cliSettings = {}, noBytesTimeoutMs
   });
   const pending = new Map(), listeners = new Set(), acc = {};
   let nextId = 0, sessionId, text = '', thought = '', thoughtId = 0, buffer = '', bytes = 0;
-  let aborted = false, closed = false, failure = null, timer;
+  let aborted = false, closed = false, processExited = false, failure = null, timer;
+  let settled = false;
   function emit(type, value) { for (const listener of listeners) { try { listener(type, value); } catch { /* isolate UI */ } } }
   function fail(message) {
     failure ||= message;
@@ -100,30 +102,34 @@ function runKimiAcp({ bot, prompt, workspace, cliSettings = {}, noBytesTimeoutMs
     let newline;
     while ((newline = buffer.indexOf('\n')) >= 0) {
       const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
-      try { receive(JSON.parse(line)); } catch { fail(I18n.t('Kimi 返回了无效协议数据')); }
+      try { receive(JSON.parse(line.replace(/^\uFEFF/, ''))); } catch { fail(I18n.t('Kimi 返回了无效协议数据')); void close(); }
     }
   });
   child.stderr.on('data', () => {});
   child.stdin.on('error', () => fail(I18n.t('Kimi 输入通道已关闭')));
   child.on('error', () => fail(I18n.t('无法启动 Kimi Code')));
-  child.on('close', () => { closed = true; fail(I18n.t('Kimi 连接已结束')); });
+  child.on('close', code => {
+    if (processExited) return;
+    processExited = true;
+    if (!closed && code !== 0) fail(I18n.t('Kimi 连接已结束'));
+    if (!closed) {
+      buffer += decoder.end();
+      if (buffer.trim()) { try { receive(JSON.parse(buffer.replace(/^\uFEFF/, ''))); } catch { fail(I18n.t('Kimi 返回了无效协议数据')); } }
+    }
+    closed = true; clearTimeout(timer);
+    if (pending.size) fail(I18n.t('Kimi 连接已结束'));
+  });
   let closing;
   function close() {
     if (closing) return closing;
     closing = (async () => {
       clearTimeout(timer);
-      if (closed) return;
+      if (closed) { child.stdin.destroy(); return; }
       closed = true; fail(I18n.t('Kimi 连接已关闭'));
-      if (process.platform === 'win32' && Number.isInteger(child.pid)) {
-        await new Promise(resolve => {
-          const killer = spawnProcess('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-          const deadline = setTimeout(() => { killer.kill(); child.kill(); resolve(); }, 5000);
-          const done = () => { clearTimeout(deadline); resolve(); };
-          killer.once('close', done); killer.once('error', () => { child.kill(); done(); });
-        });
-      } else if (process.platform !== 'win32' && Number.isInteger(child.pid)) {
-        try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
-      } else child.kill();
+      const cleanup = await terminateTree(child.pid, { spawnProcess, killProcess: (pid, signal) => {
+        if (pid === child.pid) child.kill(signal); else process.kill(pid, signal);
+      } });
+      if (['root', 'unconfirmed'].includes(cleanup?.scope)) acc.cleanupWarning = I18n.t('未确认所有子进程已退出，请检查系统任务管理器');
       child.stdin.destroy();
     })();
     return closing;
@@ -145,6 +151,8 @@ function runKimiAcp({ bot, prompt, workspace, cliSettings = {}, noBytesTimeoutMs
       await request('session/set_config_option', { sessionId, configId: 'mode', value: 'auto' });
       const outcome = await request('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }] });
       finishThought();
+      if (aborted) throw new Error(I18n.t('Kimi 会话已取消'));
+      if (failure) throw new Error(failure);
       if (outcome?.stopReason !== 'end_turn') throw new Error(outcome?.stopReason === 'cancelled' ? I18n.t('Kimi 会话已取消') : I18n.t('Kimi 未完成本轮回复'));
       if (!text.trim()) throw new Error(I18n.t('Kimi 未返回最终回复'));
       emit('final_answer', true);
@@ -153,11 +161,11 @@ function runKimiAcp({ bot, prompt, workspace, cliSettings = {}, noBytesTimeoutMs
       const detail = aborted ? null : safeText(error.message);
       if (detail) emit('error', detail);
       result = { text, activities: acc.activities || [], aborted, error: detail };
-    } finally { await close(); }
-    return result;
+    } finally { settled = true; await close(); }
+    return { ...result, ...(acc.cleanupWarning ? { cleanupWarning: acc.cleanupWarning } : {}) };
   })();
   return { promise, onEvent(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    async cancel() { aborted = true; if (sessionId && !closed) { try { write({ method: 'session/cancel', params: { sessionId } }); } catch {} } await close(); } };
+    async cancel() { if (settled) return close(); aborted = true; if (sessionId && !closed) { try { write({ method: 'session/cancel', params: { sessionId } }); } catch {} } await close(); } };
 }
 
 module.exports = { runKimiAcp };

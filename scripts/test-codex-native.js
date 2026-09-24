@@ -132,7 +132,7 @@ test('unknown-phase buffering enforces the existing aggregate response size limi
 test('native plan uses ephemeral thread, CLI model, reasoning and built-in plan instructions', async () => {
   const f = fixture({ bot: { cliType: 'codex', executionMode: 'plan', reasoningEffort: 'high', permissionMode: 'workspace' } });
   await f.ready();
-  assert.deepEqual(f.calls[0].params, { cwd: process.cwd(), ephemeral: true, approvalPolicy: 'never', sandbox: 'workspace-write' });
+  assert.deepEqual(f.calls[0].params, { cwd: process.cwd(), ephemeral: true, approvalPolicy: 'on-request', sandbox: 'workspace-write' });
   assert.deepEqual(f.calls[1].params.collaborationMode, { mode: 'plan', settings: { model: 'model-native', reasoning_effort: 'high', developer_instructions: null } });
   f.send('item/agentMessage/delta', { itemId: 'message-1', delta: 'Planning.' });
   f.send('item/completed', { item: { type: 'agentMessage', id: 'message-1', text: 'Planning.' } });
@@ -192,13 +192,15 @@ test('questions round trip, reject stale or incomplete answers, and pause output
   f.complete(); assert.equal((await f.handle.promise).error, null);
 });
 
-test('questions time out cleanly and never persist their answers', async () => {
+test('questions time out cleanly and retain only unanswered questions for explicit continuation', async () => {
   const f = fixture({ inputTimeoutMs: 10 }); await f.ready();
   f.send('item/tool/requestUserInput', { isBlocking: true, questions: [{ id: 'x', question: 'Choose' }] }, 21);
   const result = await f.handle.promise;
   assert.match(result.error, /等待回复超时/);
   assert.equal('questions' in result, false);
   assert.equal('answers' in result, false);
+  assert.equal(result.deferredInputs[0].questions[0].question, 'Choose');
+  assert.equal(result.deferredInputs[0].status, 'deferred');
 });
 
 test('cancel interrupts the live native turn, clears its pending question and closes', async () => {
@@ -227,13 +229,59 @@ test('server loss and silent runtime have explicit failure results', async () =>
   assert.match((await silent.handle.promise).error, /长时间无输出/);
 });
 
-test('unexpected approval requests are declined and secret input is not surfaced', async () => {
+test('native command approvals round trip with session scope and secret input is not surfaced', async () => {
   const f = fixture(); await f.ready();
   f.send('item/commandExecution/requestApproval', { command: 'write to disk' }, 31);
-  assert.deepEqual(f.responses[0], { id: 31, result: { decision: 'decline' } });
+  const request = f.events.find(event => event.type === 'input_request').payload;
+  assert.equal(request.type, 'approval');
+  assert.match(request.detail, /write to disk/);
+  assert.equal(f.responses.length, 0);
+  assert.throws(() => f.handle.respondInput(request.requestId, { decision: 'arbitrary' }), /授权选项无效/);
+  f.handle.respondInput(request.requestId, { decision: 'acceptForSession' });
+  assert.deepEqual(f.responses[0], { id: 31, result: { decision: 'acceptForSession' } });
   f.send('item/tool/requestUserInput', { questions: [{ id: 'secret', question: 'Password', isSecret: true }] }, 32);
   assert.match((await f.handle.promise).error, /提问格式不受支持/);
-  assert.equal(f.events.some(event => event.type === 'input_request'), false);
+  assert.equal(f.events.filter(event => event.type === 'input_request').length, 1);
+});
+
+test('approval expiration denies and keeps the native turn running; available decisions are enforced', async () => {
+  const f = fixture({ inputTimeoutMs: 15 }); await f.ready();
+  f.send('item/commandExecution/requestApproval', { command: 'sensitive', availableDecisions: ['accept', 'decline'] }, 41);
+  const request = f.events.find(event => event.type === 'input_request').payload;
+  assert.throws(() => f.handle.respondInput(request.requestId, { decision: 'acceptForSession' }), /授权选项无效/);
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.deepEqual(f.responses[0], { id: 41, result: { decision: 'decline' } });
+  assert.equal(f.closed, false);
+  f.complete(); assert.equal((await f.handle.promise).error, null);
+});
+
+test('nonblocking questions remain answerable after the native turn has completed', async () => {
+  const f = fixture(); await f.ready();
+  f.send('item/tool/requestUserInput', { isBlocking: false, questions: [{ id: 'q', question: 'Next step?' }] }, 20);
+  f.complete(); const result = await f.handle.promise;
+  assert.equal(result.error, null); assert.equal(result.deferredInputs[0].questions[0].id, 'q');
+});
+
+test('process-tree cleanup reports OS refusal without rejecting cancellation', async () => {
+  const { terminateTree } = require('../src/main/adapters/processTree');
+  const result = await terminateTree(123, { platform: 'win32',
+    spawnProcess() { const child = new EventEmitter(); queueMicrotask(() => child.emit('close', 5)); return child; },
+    killProcess() { throw Object.assign(new Error('not permitted'), { code: 'EPERM' }); } });
+  assert.deepEqual(result, { scope: 'unconfirmed', code: 'EPERM' });
+});
+
+test('permission grant replies preserve exact requested scope and probes never prompt', async () => {
+  const f = fixture(); await f.ready();
+  const permissions = { network: { enabled: true }, fileSystem: { write: ['/tmp/project'] } };
+  f.send('item/permissions/requestApproval', { permissions }, 51);
+  f.handle.respondInput(f.events.find(event => event.type === 'input_request').payload.requestId, { decision: 'accept' });
+  assert.deepEqual(f.responses[0].result, { permissions, scope: 'turn' });
+  f.complete(); await f.handle.promise;
+  const probe = fixture({ probe: true }); await probe.ready();
+  probe.send('item/fileChange/requestApproval', {}, 52);
+  assert.deepEqual(probe.responses[0].result, { decision: 'decline' });
+  assert.equal(probe.events.some(event => event.type === 'input_request'), false);
+  probe.complete(); await probe.handle.promise;
 });
 
 test('Codex transport preserves split UTF-8 and rejects pending requests on process error', async () => {
@@ -383,4 +431,83 @@ test('Linux Codex launch paths containing spaces are passed literally without sh
   const rpc = new exported.exports.CodexRpc({ spawnProcess: (command, args, options) => { calls.push({ command, options }); return child; } });
   assert.equal(calls[0].command, '/home/test user/.local/bin/codex'); assert.equal(calls[0].options.shell, false);
   await rpc.close();
+});
+
+
+test('RPC consumes BOM and final split UTF8 response without newline exactly once', async () => {
+  const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough(); child.kill = () => true;
+  const rpc = new CodexRpc({ spawnProcess: () => child });
+  const events = []; rpc.onMessage(event => events.push(event));
+  const pending = rpc.request('sample');
+  const wire = Buffer.from('\uFEFF' + JSON.stringify({ id: 1, result: { text: '中文 😀' } }));
+  for (const byte of wire) child.stdout.write(Buffer.from([byte]));
+  child.emit('close', 0); child.emit('close', 0);
+  assert.deepEqual(await pending, { text: '中文 😀' });
+  assert.equal(events.filter(event => event.method === 'transport/closed').length, 1);
+  assert.equal(rpc.pending.size, 0); await rpc.close(); assert.equal(child.stdin.destroyed, true);
+});
+
+test('RPC closed before response rejects pending work and ignores late terminal bytes', async () => {
+  const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough(); child.kill = () => true;
+  const rpc = new CodexRpc({ spawnProcess: () => child });
+  const rejected = assert.rejects(rpc.request('sample'), /关闭/);
+  await rpc.close(); child.stdout.write(JSON.stringify({ id: 1, result: 'late' })); child.emit('close', 0);
+  await rejected; assert.equal(rpc.pending.size, 0);
+});
+
+
+test('Codex transport owns and terminates real synthetic child and grandchild processes', { timeout: 15000 }, async () => {
+  const { spawn } = require('node:child_process');
+  const { terminateTree } = require('../src/main/adapters/processTree');
+  const grandchild = 'setInterval(() => {}, 1000)';
+  const childCode = `const {spawn}=require('node:child_process'); const g=spawn(process.execPath,['-e',${JSON.stringify(grandchild)}],{stdio:'ignore',windowsHide:true});
+    process.stdout.write(JSON.stringify({method:'fixture/ready',params:{pids:[process.ppid,process.pid,g.pid]}})+'\\n'); setInterval(()=>{},1000);`;
+  const parentCode = `const {spawn}=require('node:child_process');const c=spawn(process.execPath,['-e',${JSON.stringify(childCode)}],{stdio:['ignore','pipe','ignore'],windowsHide:true});c.stdout.pipe(process.stdout);setInterval(()=>{},1000);`;
+  let pids = [], native;
+  const rpc = new CodexRpc({ spawnProcess(command, args, options) {
+    if (command === 'taskkill') return spawn(command, args, options);
+    native = spawn(process.execPath, ['-e', parentCode], { ...options, shell: false }); return native;
+  } });
+  const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  try {
+    await Promise.race([
+      new Promise(resolve => rpc.onMessage(message => { if (message.method === 'fixture/ready') { pids = message.params.pids; resolve(); } })),
+      new Promise((_, reject) => { const timer = setTimeout(() => reject(new Error('Fixture process readiness timeout')), 5000); timer.unref(); }),
+    ]);
+    assert.equal(pids.length, 3); assert.ok(pids.every(alive));
+    await Promise.all([rpc.close(), rpc.close()]);
+    const deadline = Date.now() + 5000;
+    while (pids.some(alive) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 30));
+    assert.ok(pids.every(pid => !alive(pid)), `Owned processes survived: ${pids.filter(alive)}`);
+  } finally {
+    await rpc.close();
+    for (const pid of [native?.pid, ...pids].filter(Number.isInteger)) if (alive(pid)) await terminateTree(pid);
+  }
+});
+
+test('process tree cleanup handles taskkill error, failure and timeout exactly once with root fallback', async () => {
+  const { terminateTree } = require('../src/main/adapters/processTree');
+  for (const mode of ['throw', 'error', 'failed', 'timeout']) {
+    const calls = [], killer = new EventEmitter(); killer.kill = () => {};
+    await terminateTree(123, { platform: 'win32', timeoutMs: 5,
+      killProcess: (pid, signal) => calls.push([pid, signal]),
+      spawnProcess() { if (mode === 'throw') throw new Error('spawn failed');
+        queueMicrotask(() => { if (mode === 'error') killer.emit('error', new Error('taskkill failed'));
+          else if (mode === 'failed') killer.emit('close', 1); }); return killer; },
+    });
+    killer.emit('close', 1);
+    assert.deepEqual(calls, [[123, 'SIGKILL']]);
+  }
+  const calls = [];
+  await terminateTree(456, { platform: 'linux', killProcess: (pid, signal) => calls.push([pid, signal]) });
+  assert.deepEqual(calls, [[-456, 'SIGKILL']]);
+});
+
+
+test('RPC nonzero exit rejects a buffered response rather than accepting success', async () => {
+  const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough(); child.kill = () => true;
+  const rpc = new CodexRpc({ spawnProcess: () => child });
+  const rejected = assert.rejects(rpc.request('sample'), /结束/);
+  child.stdout.write(JSON.stringify({ id: 1, result: 'late success' })); child.emit('close', 1);
+  await rejected; await rpc.close();
 });

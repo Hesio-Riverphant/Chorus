@@ -54,6 +54,8 @@ jobs:
           sudo apparmor_parser -r "$RUNNER_TEMP/chorus-ci-apparmor"
       - name: Unit and process boundary tests
         run: npm test
+      - name: Cross-room process stress
+        run: npm run test:stress
       - name: Check publication inputs
         run: npm run check:release
       - name: Windows uninstall launcher boundary

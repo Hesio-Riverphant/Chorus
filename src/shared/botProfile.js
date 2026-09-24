@@ -29,9 +29,10 @@
       return { type: 'provider', provider: avatar.provider };
     }
     if (avatar.type === 'text' && typeof avatar.text === 'string' &&
-        avatar.text.trim() && Array.from(avatar.text.trim()).length <= 8 && !/[\x00-\x1f\x7f]/.test(avatar.text)) {
+        Array.from(avatar.text.trim()).length <= 8 && !/[\x00-\x1f\x7f]/.test(avatar.text)) {
       return { type: 'text', text: avatar.text.trim() };
     }
+    if (avatar.type === 'image' && avatar.dataUrl === '') return { type: 'image', dataUrl: '' };
     if (avatar.type === 'image' && typeof avatar.dataUrl === 'string') {
       const match = avatar.dataUrl.match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/);
       if (match && match[2].length % 4 === 0 && match[2].length <= Math.ceil(MAX_AVATAR_BYTES / 3) * 4) {
@@ -44,7 +45,7 @@
         if (valid && bytes.length <= MAX_AVATAR_BYTES) return { type: 'image', dataUrl: avatar.dataUrl };
       }
     }
-    throw new Error(I18n.t('头像须为预置图标、1–8 字文字，或不超过 256 KB 的 PNG/JPEG/WebP 图片'));
+    throw new Error(I18n.t('头像须跟随 CLI、使用最多 8 字文字，或不超过 256 KB 的 PNG/JPEG/WebP 图片'));
   }
 
   function isModelIdentifier(value) {

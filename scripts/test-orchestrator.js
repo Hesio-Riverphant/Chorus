@@ -70,6 +70,80 @@ function deferred() {
   return { promise, resolve };
 }
 
+test('expired native questions persist and explicit answers start only their member with prior work', async () => {
+  const input = { requestId: 'later', status: 'deferred', questions: [{ id: 'choice', question: 'Continue?' }] };
+  const f = fixture({ bots: 2, runBot: (_args, index) => complete(index === 1 ? {
+    text: 'Partial operation completed', error: 'reply timeout', deferredInputs: [input],
+  } : {}) });
+  await f.orchestrator.handleHuman('r1', '@Bot0 task mentions @all in the original', { mode: 'plan' });
+  const failed = f.messages.r1.find(message => message.deferredInputs);
+  assert.equal(f.orchestrator.getPendingInputs('r1')[0].status, 'deferred');
+  assert.equal(f.orchestrator.isBusy('r1'), false);
+  const before = f.calls.length;
+  f.rooms[0].archivedAt = 1;
+  assert.throws(() => f.orchestrator.respondInput({ roomId: 'r1', messageId: failed.id, requestId: 'later', answers: { choice: { answers: ['Yes'] } } }), /恢复归档/);
+  f.rooms[0].archivedAt = null;
+  await f.orchestrator.respondInput({ roomId: 'r1', messageId: failed.id, requestId: 'later', answers: { choice: { answers: ['Yes @all'] } } });
+  assert.equal(f.calls.length, before + 1);
+  assert.equal(f.calls.at(-1).bot.id, 'b0');
+  assert.equal(f.calls.at(-1).bot.executionMode, 'plan');
+  assert.match(f.calls.at(-1).prompt, /Partial operation completed/);
+  assert.match(f.calls.at(-1).prompt, /Yes @all/);
+  assert.equal(failed.deferredInputs[0].status, 'answered');
+  assert.equal(f.orchestrator.getPendingInputs('r1').length, 0);
+  assert.throws(() => f.orchestrator.respondInput({ roomId: 'r1', messageId: failed.id, requestId: 'later', answers: {} }), /问题已结束/);
+});
+
+test('call reservation survives parallel cap reached while its capability preparation is pending', async () => {
+  const prepare = deferred();
+  const f = fixture({ bots: 2, mode: 'parallel', settings: { maxCliCallsPerRun: 1 }, capabilities: { prepare: () => prepare.promise } });
+  f.rooms[0].memberCapabilities = { b0: { mode: 'selected', mcp: [], plugins: [] } };
+  const running = f.orchestrator.handleHuman('r1', '@all start');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.calls.length, 0);
+  prepare.resolve({ cleanup() {} }); await running;
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.messages.r1.find(message => message.authorId === 'b0').status, 'done');
+});
+
+test('retry invalidates the old deferred question so it cannot dispatch the same task again', async () => {
+  const f = fixture({ bots: 1, runBot: (_args, index) => complete(index === 1 ? { error: 'timeout',
+    deferredInputs: [{ requestId: 'old', status: 'deferred', questions: [{ id: 'q', question: 'Continue?' }] }] } : {}) });
+  await f.orchestrator.handleHuman('r1', 'task');
+  const failed = f.messages.r1.find(message => message.status === 'error');
+  await f.orchestrator.retry('r1', failed.id);
+  assert.equal(f.orchestrator.getPendingInputs('r1').length, 0);
+  assert.throws(() => f.orchestrator.respondInput({ roomId: 'r1', messageId: failed.id, requestId: 'old', answers: { q: { answers: ['yes'] } } }), /问题已结束/);
+  assert.equal(f.calls.length, 2);
+});
+
+test('failed process-tree cleanup remains visible after stop suppresses streaming events', async () => {
+  const wait = deferred();
+  const f = fixture({ bots: 1, runBot: () => ({ promise: wait.promise, onEvent() {},
+    async cancel() { wait.resolve({ text: 'partial', aborted: true, cleanupWarning: 'Process cleanup unconfirmed' }); } }) });
+  const running = f.orchestrator.handleHuman('r1', 'stop');
+  await f.orchestrator.stop('r1'); await running;
+  assert.ok(f.messages.r1.some(message => message.authorType === 'system' && message.text.includes('Process cleanup unconfirmed')));
+  assert.equal(f.messages.r1.find(message => message.authorType === 'bot').status, 'aborted');
+});
+
+test('budget reported while capability preparation waits prevents that new process launch', async () => {
+  const prepare = deferred(), active = deferred(); let emitUsage;
+  const f = fixture({ bots: 2, mode: 'parallel', settings: { tokenBudgetPerRun: 5, maxParallel: 2 },
+    capabilities: { prepare: bot => bot.id === 'b1' ? prepare.promise : Promise.resolve({ cleanup() {} }) },
+    runBot: () => ({ promise: active.promise, onEvent(listener) { emitUsage = listener; }, cancel: async () => {} }) });
+  f.rooms[0].memberCapabilities = { b1: { mode: 'selected', mcp: [], plugins: [] } };
+  const running = f.orchestrator.handleHuman('r1', '@all start');
+  await new Promise(resolve => setImmediate(resolve));
+  emitUsage('usage', { tokens: 6, inputTokens: 5, outputTokens: 1 });
+  prepare.resolve({ cleanup() {} });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.calls.length, 1);
+  active.resolve({ text: 'Active task finishes', usage: { tokens: 6, inputTokens: 5, outputTokens: 1 } });
+  await running;
+  assert.equal(f.messages.r1.find(message => message.authorId === 'b0').status, 'done');
+});
+
 test('actual dispatch applies history token budget but preserves current request and persona', async () => {
   const f = fixture({ bots: 1, settings: { historyTokenBudget: 15 }, runBot: () => complete({ text: 'LARGE_OLD_REPLY '.repeat(400) }) });
   f.members[0].persona = 'PERSONA_MUST_STAY';
@@ -270,13 +344,13 @@ test('Claude persona remains present in stdin transcript', () => {
   assert.match(buildPrompt(bot, [], [bot], {}), /【你的角色设定】careful reviewer & collaborator/);
 });
 
-test('legacy token and cost limits do not stop priced rooms', async () => {
+test('reported token and priced usage soft limits stop later dispatch', async () => {
   const f = fixture({ settings: { costMode: 'none', costBudgetPerRun: 0.001, tokenBudgetPerRun: 1 } });
   f.members[0].model = 'fixture';
   f.config.agentPricing = { codex: [{ enabled: true, model: 'fixture', inputPerMillion: 1000, outputPerMillion: 0 }] };
   await f.orchestrator.handleHuman('r1', 'start');
-  assert.equal(f.calls.length, 2);
-  assert.equal(f.events.filter((e) => e.kind === 'run_update').at(-1).run.status, 'done');
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.events.filter((e) => e.kind === 'run_update').at(-1).run.status, 'budget');
 });
 
 test('legacy zero cost limit does not block token-only or explicitly priced rooms', async () => {
@@ -584,4 +658,86 @@ test('dispatch consumes Agent defaults and isolated per-room capability and side
   assert.ok(f.calls[2].prompt.includes('SIDE_SNAPSHOT'));
   assert.ok(!f.calls[2].prompt.includes('GLOBAL_LATER'));
   assert.deepEqual(choices[2], ['snapshot']);
+});
+
+
+test('unknown native usage and text estimates never trigger a reported soft cap', async () => {
+  const f = fixture({ settings: { tokenBudgetPerRun: 1, costBudgetPerRun: 0.001 },
+    runBot: () => complete({ text: 'unknown '.repeat(100), usage: {} }) });
+  await f.orchestrator.handleHuman('r1', 'large prompt '.repeat(300));
+  assert.equal(f.calls.length, 2);
+  const budget = f.events.filter(e => e.kind === 'run_update').at(-1).run.budget;
+  assert.equal(budget.reportedTokens, 0); assert.equal(budget.unknownTokenCalls, 2);
+  assert.equal(budget.reportedCost, 0); assert.equal(budget.unknownCostCalls, 2);
+});
+
+test('live usage snapshots stop queued work while every already running task completes', async () => {
+  const handles = [], turns = [];
+  const f = fixture({ bots: 5, mode: 'parallel', settings: { tokenBudgetPerRun: 10 }, runBot: () => {
+    const turn = deferred(), handle = { promise: turn.promise, onEvent(callback) { this.event = callback; }, cancel: async () => { handle.cancelled = true; } };
+    turns.push(turn); handles.push(handle); return handle;
+  } });
+  const running = f.orchestrator.handleHuman('r1', 'start');
+  assert.equal(handles.length, 3);
+  handles[1].event('usage', { inputTokens: 8, outputTokens: 2, tokens: 10 });
+  handles[1].event('usage', { inputTokens: 8, outputTokens: 2, tokens: 10 });
+  turns[0].resolve({ text: 'first', usage: { inputTokens: 0, outputTokens: 0, tokens: 0 } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(handles.length, 3); assert.ok(handles.every(h => !h.cancelled));
+  turns[1].resolve({ text: 'second', usage: {} });
+  await new Promise(resolve => setImmediate(resolve));
+  const inFlight = f.events.filter(e => e.kind === 'run_update').at(-1).run;
+  assert.equal(inFlight.status, 'running'); assert.equal(inFlight.dispatchStopped, true);
+  turns[2].resolve({ text: 'third', usage: { inputTokens: 1, outputTokens: 1, tokens: 2 } });
+  await running;
+  assert.ok(f.messages.r1.filter(m => m.authorType === 'bot').every(m => m.status === 'done'));
+  const last = f.events.filter(e => e.kind === 'run_update').at(-1).run;
+  assert.equal(last.status, 'budget'); assert.equal(last.stopping, false); assert.equal(last.budget.reportedTokens, 12);
+  assert.equal(f.messages.r1.find(m => m.authorType === 'human').roundRun.budget.reportedTokens, 12);
+});
+
+test('concurrent rooms have independent allowances and native cost applies even with cost display off', async () => {
+  const turns = [], f = fixture({ settings: { costBudgetPerRun: 0.1, costMode: 'none' }, runBot: () => {
+    const turn = deferred(); turns.push(turn); return { promise: turn.promise, onEvent() {}, cancel: async () => { throw new Error('must not cancel'); } };
+  } });
+  const first = f.orchestrator.handleHuman('r1', 'room one'), second = f.orchestrator.handleHuman('r2', 'room two');
+  turns[0].resolve({ text: 'one', usage: { apiCost: 0.1 } });
+  await first; assert.equal(f.calls.length, 2);
+  turns[1].resolve({ text: 'two', usage: { apiCost: 0.01 } });
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(f.calls.length, 3);
+  turns[2].resolve({ text: 'two next', usage: { apiCost: 0.01 } }); await second;
+  assert.equal(f.events.filter(e => e.kind === 'run_update' && e.roomId === 'r2').at(-1).run.status, 'done');
+});
+
+test('retry retains reported failed attempt spend and does not supersede when cap prevents dispatch', async () => {
+  const f = fixture({ bots: 1, settings: { tokenBudgetPerRun: 3 }, runBot: () => complete({ error: 'fixture failure' }) });
+  await f.orchestrator.handleHuman('r1', 'first');
+  const failed = f.messages.r1.find(m => m.authorType === 'bot');
+  await f.orchestrator.retry('r1', failed.id);
+  assert.equal(f.calls.length, 1); assert.equal(failed.supersededBy, undefined);
+  assert.equal(f.events.filter(e => e.kind === 'run_update').at(-1).run.budget.reportedTokens, 3);
+  await f.orchestrator.handleHuman('r1', 'new explicit human round'); assert.equal(f.calls.length, 2);
+});
+
+test('reported cost cap uses complete native counters and configured prices, not estimated tokens', async () => {
+  for (const usage of [{ inputTokens: 100, outputTokens: 0 }, { inputTokens: 100, outputTokens: 0, inputEstimated: true }]) {
+    const f = fixture({ settings: { costBudgetPerRun: 0.01 }, runBot: () => complete({ usage }) });
+    f.members.forEach(bot => { bot.model = 'fixture'; });
+    f.config.agentPricing = { codex: [{ enabled: true, model: 'fixture', inputPerMillion: 100, outputPerMillion: 0 }] };
+    await f.orchestrator.handleHuman('r1', 'start');
+    assert.equal(f.calls.length, usage.inputEstimated ? 2 : 1);
+  }
+});
+
+
+test('repeated retries sum distinct failed attempts once until the original round allowance is spent', async () => {
+  const f = fixture({ bots: 1, settings: { tokenBudgetPerRun: 6 }, runBot: () => complete({ error: 'fixture failure' }) });
+  await f.orchestrator.handleHuman('r1', 'first');
+  const failed = f.messages.r1.find(m => m.authorType === 'bot');
+  await f.orchestrator.retry('r1', failed.id);
+  const second = f.messages.r1.findLast(m => m.authorType === 'bot');
+  assert.equal(failed.supersededBy, second.id);
+  await f.orchestrator.retry('r1', second.id);
+  assert.equal(f.calls.length, 2); assert.equal(second.supersededBy, undefined);
+  assert.equal(f.events.filter(e => e.kind === 'run_update').at(-1).run.budget.reportedTokens, 6);
 });

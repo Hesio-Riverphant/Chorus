@@ -349,9 +349,17 @@ function syncComposer() {
     I18n.write(btn, () => I18n.t('停止'));
     status.hidden = false;
     status.innerHTML =
-      I18n.tpl`${run.status === 'stopping' ? I18n.t('正在停止…') : I18n.t('运行中')} · 第 ${fmtNum(run.wave)} 波 · ` +
+      I18n.tpl`${run.status === 'stopping' ? I18n.t('正在停止…') : run.dispatchStopped ? I18n.t('已停止派发，等待运行任务完成') : I18n.t('运行中')} · 第 ${fmtNum(run.wave)} 波 · ` +
       I18n.tpl`${run.calls} 次调用 · ~${fmtNum(run.tokens)} tok` +
       (run.cost > 0 ? ` · ≈$${run.cost.toFixed(4)}` : '');
+    const budget = run.budget;
+    if (budget?.tokenLimit > 0 || budget?.costLimit > 0) {
+      const hint = document.createElement('span'); hint.className = 'hint';
+      I18n.write(hint, () => ' · ' + (budget.tokenLimit > 0 ? I18n.tpl`已报告 ${fmtNum(budget.reportedTokens)} / ${fmtNum(budget.tokenLimit)} Token` : '') +
+        (budget.costLimit > 0 ? I18n.tpl` 已计费用 $${budget.reportedCost.toFixed(4)} / $${budget.costLimit}` : '') +
+        (budget.unknownTokenCalls || budget.unknownCostCalls ? I18n.tpl`（用量未知 ${budget.unknownTokenCalls} 次，费用未知 ${budget.unknownCostCalls} 次）` : ''));
+      status.append(hint);
+    }
   } else {
     btn.classList.add('send-btn');
     btn.classList.remove('stop-btn');
@@ -561,7 +569,8 @@ function openBotEdit(bot, roomId = state.currentRoomId) {
   const sharedCount = state.rooms.filter(room => !RoomProfiles.isLocal(room) && room.botIds?.includes(bot.id)).length;
   I18n.write($('#botModalTitle'), () => local ? I18n.t('编辑侧聊成员 · 仅此侧聊生效') : sharedCount > 1 ? I18n.tpl`编辑共享 bot · ${sharedCount} 个房间同步` : I18n.t('编辑 bot'));
   $('#f_name').value = bot.name;
-  populateBotProfile(bot);
+  const roomBot = roomMembers(state.rooms.find(room => room.id === roomId)).find(item => item.id === bot.id) || bot;
+  populateBotProfile(roomBot);
   populateCliChoices(bot.cliType);
   $('#f_model').value = bot.model || '';
   ModelPicker.load(bot.cliType, bot.model || '', bot.reasoningEffort || '', bot.executionMode || 'chat');
@@ -607,6 +616,12 @@ async function saveBot() {
   const local = RoomProfiles.isLocal(targetRoom);
   const existing = (local ? roomMembers(targetRoom) : state.bots).find((b) => b.id === state.editingBotId);
   const payload = botFormPayload();
+  // Host selection is room-local. Do not persist projected host/demotion roles
+  // into the shared bot or side-chat snapshot when only toggling the checkbox.
+  if (targetRoom && (moderatorChecked || !state.botRoleEdited)) {
+    const profile = local ? targetRoom.memberProfiles?.[state.editingBotId] || existing : existing;
+    payload.role = profile?.role || '协作者'; payload.customRole = !!profile?.customRole;
+  }
   if (existing) payload.id = existing.id;
   else if (RoomUI.ownsMembers(state.rooms.find((room) => room.id === targetRoomId))) payload.ownerRoomId = targetRoomId;
 
@@ -631,7 +646,7 @@ async function saveBot() {
     let botIds = curRoom.botIds || [];
     if (!existing && !botIds.includes(saved.id)) botIds = botIds.concat([saved.id]);
     if (moderatorChecked) modId = saved.id;
-    else if (modId === saved.id && !moderatorChecked) modId = botIds[0] || '';
+    else if (modId === saved.id && !moderatorChecked) modId = botIds.find(id => id !== saved.id) || '';
     if (modId !== curRoom.moderatorBotId ||
         botIds.join(',') !== (curRoom.botIds || []).join(',')) {
       const updated = await window.api.saveRoom({ ...curRoom, moderatorBotId: modId, botIds });
@@ -917,6 +932,8 @@ function openSettings(tab = 'general', roomId = state.currentRoomId) {
   $('#s_turns').value = s.maxAutoTurns != null ? s.maxAutoTurns : '';
   $('#s_edge').value = eff('perEdgeMentionCap');
   $('#s_calls').value = eff('maxCliCallsPerRun');
+  $('#s_tokenBudget').value = eff('tokenBudgetPerRun') || 0;
+  $('#s_costBudget').value = eff('costBudgetPerRun') || 0;
   $('#s_catchup').value = eff('catchupMessages');
   $('#s_historyTokens').value = eff('historyTokenBudget') || 0;
   const mode = s.costMode === 'cli' ? 'cli' : 'none';
@@ -1299,6 +1316,8 @@ async function saveSettings(closeAfterSave = true) {
     maxAutoTurns: num('#s_turns'),
     perEdgeMentionCap: num('#s_edge'),
     maxCliCallsPerRun: num('#s_calls'),
+    tokenBudgetPerRun: num('#s_tokenBudget'),
+    costBudgetPerRun: num('#s_costBudget'),
     catchupMessages: num('#s_catchup'),
     historyTokenBudget: num('#s_historyTokens'),
     costMode: mode ? mode.value : 'none',

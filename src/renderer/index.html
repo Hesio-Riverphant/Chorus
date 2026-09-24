@@ -158,11 +158,11 @@
         <div class="row-inline avatar-controls">
           <span id="f_avatarPreview"></span>
           <select id="f_avatarType" aria-label="头像类型" data-i18n-attrs="{&quot;aria-label&quot;: &quot;头像类型&quot;}">
-            <option value="default" data-i18n="跟随 CLI">跟随 CLI</option><option value="claude">Claude</option>
-            <option value="codex">OpenAI / Codex</option><option value="kimi">Kimi</option>
+            <option value="default" data-i18n="跟随 CLI">跟随 CLI</option>
             <option value="text" data-i18n="自定义文字">自定义文字</option><option value="image" data-i18n="自定义图片">自定义图片</option>
           </select>
-          <input type="text" id="f_avatarText" maxlength="4" placeholder="文字" aria-label="头像文字" hidden  data-i18n-attrs="{&quot;placeholder&quot;: &quot;文字&quot;, &quot;aria-label&quot;: &quot;头像文字&quot;}"/>
+          <input type="text" id="f_avatarText" maxlength="16" placeholder="文字" aria-label="头像文字" hidden  data-i18n-attrs="{&quot;placeholder&quot;: &quot;文字&quot;, &quot;aria-label&quot;: &quot;头像文字&quot;}"/>
+          <small id="f_avatarEasterEgg" class="hint" hidden data-i18n="彩蛋 · DeepSeek">彩蛋 · DeepSeek</small>
           <button type="button" id="f_avatarPick" class="ghost-btn" hidden data-i18n="选择图片…">选择图片…</button>
         </div>
       </div>
@@ -388,6 +388,15 @@
               <span data-i18n="每轮对话最多调用 Agent 次数">每轮对话最多调用 Agent 次数</span>
               <input type="number" id="s_calls" min="1" />
             </label>
+            <label class="field">
+              <span data-i18n="每轮已报告 Token 软上限（0 = 不限）">每轮已报告 Token 软上限（0 = 不限）</span>
+              <input type="number" id="s_tokenBudget" min="0" max="1000000000000" step="1" />
+            </label>
+            <label class="field">
+              <span data-i18n="每轮费用软上限 USD（0 = 不限）">每轮费用软上限 USD（0 = 不限）</span>
+              <input type="number" id="s_costBudget" min="0" max="1000000000" step="any" />
+            </label>
+            <p class="hint" data-i18n="达到软上限后仅停止派发新任务，已开始的任务继续完成，因此可能超额。按原生已报告用量与已配置单价或 CLI 费用计算；未知用量不视为零，不用文本估算阻止任务。每个房间独立，新的人类消息重新计额，重试延续原轮次。">达到软上限后仅停止派发新任务，已开始的任务继续完成，因此可能超额。按原生已报告用量与已配置单价或 CLI 费用计算；未知用量不视为零，不用文本估算阻止任务。每个房间独立，新的人类消息重新计额，重试延续原轮次。</p>
             <label class="field">
               <span data-i18n="本轮附带的最近历史条数">本轮附带的最近历史条数</span>
               <input type="number" id="s_catchup" min="0" max="500" aria-describedby="catchupHelp" />

@@ -6,7 +6,7 @@ Chorus runs locally installed command-line agents. Install and sign in to each a
 
 | Agent | Noninteractive transport | Permission mapping | Validation |
 | --- | --- | --- | --- |
-| Claude Code | `-p --output-format stream-json` | Native read-only tool allowlist, accept-edits, or bypass-permissions | Local CLI and application regression tests |
+| Claude Code | Bidirectional stream-json, `--permission-prompts host --permission-prompt-tool stdio` | Native read-only tool allowlist, accept-edits, or bypass-permissions; host approval/question cards | Local initialize handshake, official SDK contract, protocol and application regression tests |
 | Codex | Native app-server JSON-RPC | Read-only, workspace-write, or unrestricted | Local CLI and application regression tests |
 | Kimi Code | Print JSONL by default; ACP when selecting thinking | Explicit full access required; ACP session overrides leave global configuration intact | Local 0.28.1 model discovery, model connection, and offline ACP settings handshake; complete ACP model/tool turn not yet verified |
 | CodeBuddy Code | `--print --output-format stream-json` | Read-only tools, accept-edits, or bypass-permissions | Official protocol and offline tests; local account execution not verified |

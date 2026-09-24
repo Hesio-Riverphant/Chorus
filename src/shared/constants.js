@@ -41,6 +41,8 @@ const CostMode = { NONE: 'none', CLI: 'cli', CUSTOM: 'custom' };
 const DEFAULTS = {
   perEdgeMentionCap: 2,        // A may @B at most N times per run
   maxCliCallsPerRun: 20,       // absolute ceiling of bot turns per run
+  tokenBudgetPerRun: 0,        // reported usage soft cap; 0 = off, active work completes
+  costBudgetPerRun: 0,         // USD from reported usage; 0 = off
   catchupMessages: 20,         // first-in-room transcript size
   historyTokenBudget: 0,       // old transcript estimate cap; 0 = no token cap
   autoCollapseProcess: true,   // only confirmed public process output; tool details stay independent

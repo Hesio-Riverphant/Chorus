@@ -32,15 +32,16 @@ module.exports = async function experienceFlows({ win, persistence, check }) {
     document.querySelector('#f_rolePreset').value = '审查者';
     document.querySelector('#f_rolePreset').dispatchEvent(new Event('change'));
     document.querySelector('#f_persona').value = '';
-    document.querySelector('#f_avatarType').value = 'kimi';
+    document.querySelector('#f_avatarType').value = 'text';
+    document.querySelector('#f_avatarText').value = 'K';
     document.querySelector('#f_avatarType').dispatchEvent(new Event('change'));
     document.querySelector('#f_model').value = 'fixture-model';
     document.querySelector('#botSaveBtn').click();
   });
   await settle();
   const saved = persistence.listBots().find((bot) => bot.id === bots[0].id);
-  check('Bot角色空人设、固定头像和模型经UI持久化', saved.role === '审查者' && saved.persona === '' &&
-    saved.avatar?.provider === 'kimi' && saved.model === 'fixture-model');
+  check('Bot角色空人设、自定义头像和模型经UI持久化', saved.role === '审查者' && saved.persona === '' &&
+    saved.avatar?.type === 'text' && saved.avatar.text === 'K' && saved.model === 'fixture-model');
 
   if (bots.length > 1) {
     await page(() => document.querySelector('#botList .bot-item').focus());

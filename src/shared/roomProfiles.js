@@ -14,7 +14,10 @@
       if (!bot) return null;
       const nativeCapabilities = room.memberCapabilities?.[id] || (isLocal(room)
         ? bot.nativeCapabilities : settings.agentCapabilities?.[bot.cliType]) || inherit();
-      return { ...bot, nativeCapabilities };
+      // Host assignment belongs to this room, including side-chat snapshots.
+      // Project it into the profile consumed by UI and prompts, never global bots.
+      const role = id === room.moderatorBotId ? '主持人' : bot.role === '主持人' ? '协作者' : bot.role;
+      return { ...bot, role, customRole: role !== bot.role || id === room.moderatorBotId ? false : bot.customRole, nativeCapabilities };
     }).filter(Boolean);
   }
   return { members, isLocal };

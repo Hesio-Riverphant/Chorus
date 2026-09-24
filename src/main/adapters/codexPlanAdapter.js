@@ -7,6 +7,7 @@ const { safeText, emitActivity, nextActivityOrder } = require('./activities');
 const { isModelIdentifier } = require('../../shared/botProfile');
 const { codexSubagents, codexChildEvent } = require('./subagents');
 const { codexTokenUsage } = require('./tokenUsage');
+const { validateAnswers } = require('./inputAnswers');
 
 const MAX_TEXT = 4 * 1024 * 1024;
 const SANDBOX = { read_only: 'read-only', workspace: 'workspace-write', full: 'danger-full-access' };
@@ -73,7 +74,11 @@ function runCodexNative({ bot, prompt, workspace, noBytesTimeoutMs = 90000, inpu
     if (extra.error) emit('error', safeText(extra.error));
     finishing = true;
     clearTimeout(timer);
-    for (const input of inputs.values()) clearTimeout(input.timer);
+    const deferredInputs = [];
+    for (const [requestId, input] of inputs) {
+      clearTimeout(input.timer);
+      if (!aborted && !extra.aborted && input.questions) deferredInputs.push({ requestId, questions: input.questions, status: 'deferred' });
+    }
     inputs.clear();
     if (isGoal && threadId && (!goal || goal.status === 'active')) {
       try {
@@ -83,10 +88,17 @@ function runCodexNative({ bot, prompt, workspace, noBytesTimeoutMs = 90000, inpu
         }
       } catch (_) { /* Keep the last confirmed state; close remains bounded. */ }
     }
-    await rpc.close();
+    let cleanupWarning;
+    try {
+      const cleanup = await rpc.close();
+      if (['root', 'unconfirmed'].includes(cleanup?.scope)) cleanupWarning = I18n.t('未确认所有子进程已退出，请检查系统任务管理器');
+    }
+    catch (error) { extra.error ||= safeText(error.message || String(error)); }
     settled = true;
     resolve({ text: acc.text, sessionId: null, usage: acc.usage, contextUsage: acc.contextUsage,
-      ...(goal ? { goal } : {}), aborted: !!extra.aborted, error: extra.error ? safeText(extra.error) : null });
+      ...(goal ? { goal } : {}), ...(deferredInputs.length ? { deferredInputs } : {}),
+      ...(cleanupWarning ? { cleanupWarning } : {}),
+      aborted: !!extra.aborted, error: extra.error ? safeText(extra.error) : null });
   }
   function finishGoal() {
     const reason = { paused: I18n.t('已暂停'), blocked: I18n.t('被阻塞'), usageLimited: I18n.t('达到原生用量限制'), budgetLimited: I18n.t('达到原生预算限制') }[goal?.status];
@@ -174,8 +186,34 @@ function runCodexNative({ bot, prompt, workspace, noBytesTimeoutMs = 90000, inpu
   function serverRequest(message) {
     const { id, method, params = {} } = message;
     if (method === 'currentTime/read') { rpc.respond(id, { currentTimeAt: Math.floor(Date.now() / 1000) }); return; }
-    if (method === 'item/commandExecution/requestApproval' || method === 'item/fileChange/requestApproval') {
-      rpc.respond(id, { decision: 'decline' }); return;
+    if (['item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'item/permissions/requestApproval'].includes(method)) {
+      const permissions = method === 'item/permissions/requestApproval';
+      const decline = () => rpc.respond(id, permissions ? { permissions: {}, scope: 'turn' } : { decision: 'decline' });
+      if (probe || inputs.size >= 8) { decline(); return; }
+      const item = acc.activities.find(value => value.id === params.itemId);
+      // Display the exact requested scope, with credential-shaped values redacted.
+      const rawDetail = JSON.stringify({ command: params.command, cwd: params.cwd,
+        reason: params.reason, files: item?.files, grantRoot: params.grantRoot,
+        permissions: params.permissions || params.additionalPermissions,
+        network: params.networkApprovalContext, kind: params.kind }, null, 2);
+      if (rawDetail.length > 16000 || permissions && (!params.permissions || typeof params.permissions !== 'object' || Array.isArray(params.permissions))) {
+        decline(); emit('activity', { id: `approval:${id}`, kind: 'tool', name: I18n.t('授权'), status: 'error',
+          summary: I18n.t('授权范围过大或格式无效，已拒绝'), detail: '' }); return;
+      }
+      const detail = safeText(rawDetail, 16000);
+      const available = Array.isArray(params.availableDecisions) ? params.availableDecisions : ['accept', 'acceptForSession', 'decline'];
+      const decisions = ['accept', 'acceptForSession', 'decline'].filter(value => available.includes(value));
+      if (!decisions.includes('decline')) decisions.push('decline');
+      const requestId = randomUUID();
+      const input = { id, blocking: true, approval: true, permissions: permissions ? params.permissions : null, decisions,
+        timer: setTimeout(() => {
+          try { decline(); inputs.delete(requestId); emit('input_resolved', { requestId, reason: 'expired' }); armTimer(); }
+          catch (error) { finish({ error: error.message }); }
+        }, inputTimeoutMs) };
+      inputs.set(requestId, input); armTimer();
+      emit('input_request', { requestId, type: 'approval', detail, decisions, isBlocking: true,
+        expiresAt: Date.now() + inputTimeoutMs });
+      return;
     }
     if (method === 'mcpServer/elicitation/request') {
       rpc.respond(id, { action: 'decline' });
@@ -199,24 +237,20 @@ function runCodexNative({ bot, prompt, workspace, noBytesTimeoutMs = 90000, inpu
     });
     const requestId = randomUUID();
     const input = { id, questions, blocking: params.isBlocking !== false,
-      timer: setTimeout(() => finish({ error: I18n.t('等待回复超时，已停止 Codex；可重新发送消息') }), inputTimeoutMs) };
+      timer: setTimeout(() => finish({ error: I18n.t('等待回复超时；问题已保留，回答后可继续') }), inputTimeoutMs) };
     inputs.set(requestId, input);
     armTimer();
-    emit('input_request', { requestId, questions, isBlocking: input.blocking });
+    emit('input_request', { requestId, questions, isBlocking: input.blocking, expiresAt: Date.now() + inputTimeoutMs });
   }
   function respondInput(requestId, answers) {
     const input = inputs.get(requestId);
     if (!input || settled || finishing) throw new Error(I18n.t('该提问已结束，请重新发送消息'));
-    if (!answers || typeof answers !== 'object' || Array.isArray(answers) ||
-        Object.keys(answers).some(key => !input.questions.some(question => question.id === key))) throw new Error(I18n.t('回答格式无效'));
-    const response = Object.create(null);
-    for (const question of input.questions) {
-      const values = answers[question.id]?.answers;
-      if (!Array.isArray(values) || !values.length || values.length > 10 ||
-          values.some(value => typeof value !== 'string' || !value.trim() || value.length > 16000)) throw new Error(I18n.t('请回答所有问题'));
-      response[question.id] = { answers: values };
-    }
-    rpc.respond(input.id, { answers: response });
+    if (input.approval) {
+      const decision = answers?.decision;
+      if (!input.decisions.includes(decision)) throw new Error(I18n.t('授权选项无效'));
+      rpc.respond(input.id, input.permissions ? { permissions: decision === 'decline' ? {} : input.permissions,
+        scope: decision === 'acceptForSession' ? 'session' : 'turn' } : { decision });
+    } else rpc.respond(input.id, { answers: validateAnswers(input.questions, answers) });
     clearTimeout(input.timer); inputs.delete(requestId);
     emit('input_resolved', { requestId });
     armTimer();
@@ -295,7 +329,7 @@ function runCodexNative({ bot, prompt, workspace, noBytesTimeoutMs = 90000, inpu
       await rpc.initialize();
       if (finishing || settled || aborted) return;
       const started = await rpc.request('thread/start', { cwd: workspace, ephemeral: !isGoal,
-        approvalPolicy: 'never', sandbox: probe ? 'read-only' : SANDBOX[bot.permissionMode] || 'read-only',
+        approvalPolicy: probe || bot.permissionMode === 'full' ? 'never' : 'on-request', sandbox: probe ? 'read-only' : SANDBOX[bot.permissionMode] || 'read-only',
         ...(bot.model ? { model: bot.model, allowProviderModelFallback: false } : {}),
         ...(Object.keys(config).length ? { config } : {}) });
       if (finishing || settled || aborted) return;

@@ -1045,6 +1045,14 @@ class Persistence {
     }
     if (Object.hasOwn(settings, 'agentPricing')) next.agentPricing = require('../../shared/agentPricing').normalizeAgentPricing(settings.agentPricing);
     if (Object.hasOwn(settings, 'autoCollapseProcess') && typeof settings.autoCollapseProcess !== 'boolean') throw new Error(I18n.t('自动收起过程须为开关值'));
+    for (const [key, maximum, integer] of [['tokenBudgetPerRun', 1e12, true], ['costBudgetPerRun', 1e9, false]]) {
+      if (!Object.hasOwn(settings, key)) continue;
+      const value = settings[key] ?? 0;
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > maximum || (integer && !Number.isSafeInteger(value))) {
+        throw new Error(I18n.t('软预算须为有效非负数，Token 须为整数'));
+      }
+      next[key] = value;
+    }
     if (Object.hasOwn(settings, 'historyTokenBudget')) {
       const budget = settings.historyTokenBudget ?? 0;
       if (!Number.isSafeInteger(budget) || budget < 0 || budget > 200000) throw new Error(I18n.t('旧历史 token 预算须为 0–200000 的整数'));

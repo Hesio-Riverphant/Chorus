@@ -7,15 +7,28 @@ function cancelBotEditorTest() {
 }
 
 
+const CLI_AVATARS = {
+  claude: ['Claude Code', 'claude', 'CC'], codex: ['Codex', 'codex', 'CX'], kimi: ['Kimi Code', 'kimi', 'K'],
+  codebuddy: ['CodeBuddy', 'codebuddy', 'CB'], gemini: ['Gemini CLI', 'gemini', 'G'], qwen: ['Qwen Code', 'qwen', 'Q'],
+  copilot: ['GitHub Copilot', 'githubcopilot', 'GH'], cursor: ['Cursor Agent', 'cursor', 'CU'],
+  opencode: ['OpenCode', 'opencode', 'OC'], zcode: ['ZCode', 'zai', 'Z'],
+  droid: ['Factory Droid', '', 'FD'], pi: ['Pi', '', 'π'], hermes: ['Hermes', '', 'H'],
+};
 function avatarHtml(bot) {
-  const avatar = bot.avatar || { type: 'provider', provider: bot.cliType };
-  if (avatar.type === 'image' && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(avatar.dataUrl || '')) {
-    return `<img class="avatar avatar-image" src="${esc(avatar.dataUrl)}" alt="${esc(bot.name)}" />`;
-  }
-  if (avatar.type === 'text') return `<span class="avatar text-avatar">${esc(avatar.text || '?')}</span>`;
-  const provider = avatar.provider || bot.cliType;
-  if (!['claude', 'codex', 'kimi'].includes(provider)) return `<span class="avatar text-avatar">${esc(({ pi: 'π', opencode: 'OC', hermes: 'H' })[provider] || 'CLI')}</span>`;
-  return `<span class="avatar provider-avatar"><img src="assets/${['claude', 'codex', 'kimi'].includes(provider) ? provider : 'claude'}.svg" alt="${esc(provider)}" /></span>`;
+  const [label, icon, initials] = CLI_AVATARS[bot.cliType] ||
+    [state.cliProfiles?.find(profile => profile.id === bot.cliType)?.label || 'CLI', '', 'CLI'];
+  const fallback = `<span class="avatar-fallback">${esc(initials === 'CLI' && label !== 'CLI' ? Array.from(label).slice(0, 2).join('') : initials)}</span>`;
+  const image = (source, title, cls = '') => `<span class="avatar provider-avatar ${cls}" title="${esc(title)}">${fallback}<img class="avatar-brand-image" src="${esc(source)}" alt="${esc(title)}" /></span>`;
+  const avatar = bot.avatar;
+  if (avatar?.type === 'text') return avatar.text?.trim()
+    ? `<span class="avatar text-avatar">${esc(avatar.text)}</span>`
+    : image('assets/deepseek.svg', I18n.t('彩蛋 · DeepSeek'), 'avatar-easter-egg');
+  if (avatar?.type === 'image') return avatar.dataUrl && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(avatar.dataUrl)
+    ? image(avatar.dataUrl, bot.name || label, 'custom-avatar')
+    : `<span class="avatar text-avatar" title="${esc(label)}">${fallback}</span>`;
+  // Legacy fixed-provider choices now follow the selected CLI as well.
+  return icon ? image(`assets/${icon}.svg`, label)
+    : `<span class="avatar text-avatar" title="${esc(label)}">${fallback}</span>`;
 }
 
 function displayMembers(room) {
@@ -178,13 +191,9 @@ function populateBotProfile(bot) {
   $('#f_role').value = bot.role || '';
   $('#f_role').hidden = select.value !== '__custom__';
   const avatar = bot.avatar;
-  $('#f_avatarType').querySelectorAll('[data-extra-provider]').forEach(option => option.remove());
-  if (avatar?.type === 'provider' && !['claude', 'codex', 'kimi'].includes(avatar.provider)) {
-    const option = document.createElement('option'); option.value = avatar.provider;
-    I18n.write(option, () => avatar.provider.startsWith('custom_') ? I18n.t('CLI 图标') : avatar.provider); option.dataset.extraProvider = 'true';
-    $('#f_avatarType').append(option);
-  }
-  $('#f_avatarType').value = !avatar ? 'default' : avatar.type === 'provider' ? avatar.provider : avatar.type;
+  state.botRoleEdited = false;
+  $('#f_avatarType').value = avatar?.type === 'text' || avatar?.type === 'image' ? avatar.type
+    : bot.cliType?.startsWith('custom_') ? 'image' : 'default';
   $('#f_avatarText').value = avatar?.text || '';
   state.avatarDataUrl = avatar?.dataUrl || '';
   $('#botTestResult').textContent = '';
@@ -207,12 +216,13 @@ function selectedAvatar() {
   const type = $('#f_avatarType').value;
   if (type === 'text') return { type, text: $('#f_avatarText').value.trim() };
   if (type === 'image') return { type, dataUrl: state.avatarDataUrl || '' };
-  return { type: 'provider', provider: type === 'default' ? $('#f_cliType').value : type };
+  return null;
 }
 
 function renderAvatarPreview() {
   $('#f_avatarText').hidden = $('#f_avatarType').value !== 'text';
   $('#f_avatarPick').hidden = $('#f_avatarType').value !== 'image';
+  $('#f_avatarEasterEgg').hidden = !($('#f_avatarType').value === 'text' && !$('#f_avatarText').value.trim());
   $('#f_avatarPreview').innerHTML = avatarHtml({ name: $('#f_name').value || I18n.t('预览'), cliType: $('#f_cliType').value, avatar: selectedAvatar() });
 }
 
@@ -239,8 +249,6 @@ function botFormPayload() {
   if ($('#f_cliType').value === 'kimi' && !$('input[name="f_permRadio"][value="full"]:checked')) throw new Error(I18n.t('Kimi 无交互模式会自动执行工具，请明确选择全权限'));
   ModelPicker.validate();
   const avatar = selectedAvatar();
-  if (avatar.type === 'text' && !avatar.text) throw new Error(I18n.t('请填写头像文字'));
-  if (avatar.type === 'image' && !avatar.dataUrl) throw new Error(I18n.t('请选择头像图片'));
   const payload = {
     ...ModelPicker.values(),
     name: $('#f_name').value.trim(), role: selectedRole(), customRole: $('#f_rolePreset').value === '__custom__', cliType: $('#f_cliType').value,
@@ -264,11 +272,26 @@ function updateBotDirectoryHint() {
 
 function wireBotProfile() {
   $('#f_cwd').addEventListener('input', updateBotDirectoryHint);
-  $('#f_rolePreset').addEventListener('change', updatePersonaPlaceholder);
-  $('#f_role').addEventListener('input', updatePersonaPlaceholder);
+  $('#f_rolePreset').addEventListener('change', () => {
+    state.botRoleEdited = true;
+    if (!$('#f_moderator').disabled) $('#f_moderator').checked = selectedRole() === '主持人';
+    updatePersonaPlaceholder();
+  });
+  $('#f_moderator').addEventListener('change', () => {
+    $('#f_rolePreset').value = $('#f_moderator').checked ? '主持人' : '协作者';
+    $('#f_role').value = $('#f_rolePreset').value;
+    updatePersonaPlaceholder();
+  });
+  $('#f_role').addEventListener('input', () => { state.botRoleEdited = true; updatePersonaPlaceholder(); });
   $('#f_avatarType').addEventListener('change', renderAvatarPreview);
   $('#f_avatarText').addEventListener('input', renderAvatarPreview);
-  $('#f_cliType').addEventListener('change', renderAvatarPreview);
+  $('#f_cliType').addEventListener('change', () => {
+    if ($('#f_cliType').value.startsWith('custom_') && $('#f_avatarType').value === 'default') $('#f_avatarType').value = 'image';
+    renderAvatarPreview();
+  });
+  document.addEventListener('error', event => {
+    if (event.target?.classList?.contains('avatar-brand-image')) event.target.remove();
+  }, true);
   $('#f_avatarPick').addEventListener('click', async () => {
     const data = await window.api.pickAvatar();
     if (data) { state.avatarDataUrl = data; renderAvatarPreview(); }

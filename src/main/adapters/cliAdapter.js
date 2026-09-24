@@ -2,6 +2,7 @@
 const I18n = require('../../shared/i18n');
 
 const { spawn } = require('child_process');
+const { Buffer } = require('node:buffer');
 const { StringDecoder } = require('string_decoder');
 const { SPECS, PARSERS } = require('./cliSpecs');
 const { EXTRA_SPECS, EXTRA_PARSERS } = require('./extraCliSpecs');
@@ -14,23 +15,8 @@ const { isModelIdentifier } = require('../../shared/botProfile');
 const { safeText } = require('./activities');
 const { normalizeExecutionMode } = require('../../shared/reasoning');
 
-// Recursively kill a process tree on Windows.
-function killTree(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return Promise.resolve();
-  if (process.platform !== 'win32') {
-    // Spawned Agents own a process group so cancellation includes their tools.
-    try { process.kill(-pid, 'SIGKILL'); }
-    catch { try { process.kill(pid, 'SIGKILL'); } catch { /* already stopped */ } }
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    const killer = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true });
-    const timer = setTimeout(() => { killer.kill(); resolve(); }, 5000);
-    const done = () => { clearTimeout(timer); resolve(); };
-    killer.on('error', done);
-    killer.on('close', done);
-  });
-}
+const { terminateTree } = require('./processTree');
+function killTree(pid) { return terminateTree(pid, { spawnProcess: spawn }); }
 
 // User-defined launch contracts preserve literal argv and native credentials.
 function customSpec(profile) {
@@ -96,7 +82,7 @@ function runKimiBot(options) {
 
 // Line-oriented transports remain available for other agents, connection
 // probes and offline compatibility tests of older Codex exec event streams.
-function runCliBot({ bot, prompt, goalObjective, workspace, priorSessionId, log, noBytesTimeoutMs, probe = false, cliSettings = {}, nativeArgs = [], nativeConfig = null }) {
+function runCliBot({ bot, prompt, goalObjective, workspace, priorSessionId, log, noBytesTimeoutMs, inputTimeoutMs, probe = false, cliSettings = {}, nativeArgs = [], nativeConfig = null }) {
   if (!Array.isArray(nativeArgs) || nativeArgs.length > 128 || nativeArgs.some(value => typeof value !== 'string' || /[\x00-\x1f]/.test(value))) throw new Error(I18n.t('Agent 扩展参数无效'));
   if (!probe) requireEnabled(bot.cliType, cliSettings);
   const profile = requireAppOnly(bot.cliType, cliSettings);
@@ -133,16 +119,19 @@ function runCliBot({ bot, prompt, goalObjective, workspace, priorSessionId, log,
   const listeners = new Set();
   let protocolError = null;
   let goalProtocol;
+  let inputProtocol;
   if (bot.cliType === 'claude' && bot.executionMode === 'goal') {
     goalProtocol = require('./claudeGoal').createClaudeGoal({ prompt, objective: goalObjective,
       write: value => child.stdin.write(value), end: () => child.stdin.end(), emit });
   }
 
   function parseLine(line) {
-    if (goalProtocol) {
+    if (goalProtocol || inputProtocol) {
       let value;
       try { value = JSON.parse(line); } catch (_) { return; }
-      if (goalProtocol.consume(value)) return;
+      try { if (inputProtocol?.consume(value)) return; }
+      catch (error) { failInput(error); return; }
+      if (goalProtocol?.consume(value)) return;
     }
     parse(line, emit, acc);
   }
@@ -155,6 +144,7 @@ function runCliBot({ bot, prompt, goalObjective, workspace, priorSessionId, log,
     }
     if (type === 'text_replace' && typeof payload === 'string') acc.text = payload;
     if (type === 'usage') acc.usage = payload;
+    if (type === 'final_answer' && payload === true) acc.finalAnswer = true;
     if (type === 'context_usage') acc.contextUsage = payload;
     if (type === RoomEvent.ERROR) {
       payload = safeText(typeof payload === 'string' ? payload : JSON.stringify(payload));
@@ -215,36 +205,53 @@ function runCliBot({ bot, prompt, goalObjective, workspace, priorSessionId, log,
   let stdoutBuf = '';
   const stdoutDecoder = new StringDecoder('utf8');
   const stderrDecoder = new StringDecoder('utf8');
-  let stderrParts = [];
+  let stderrParts = [], stderrDiscarded = false;
   let settled = false;
   let aborted = false;
   let timedOut = false;
-  let timer = null;
+  let timer = null, stopping = null, stdoutStarted = false;
+  const stopTree = () => stopping ||= killTree(child.pid).then(result => {
+    if (['root', 'unconfirmed'].includes(result?.scope)) acc.cleanupWarning = I18n.t('未确认所有子进程已退出，请检查系统任务管理器');
+    return result;
+  });
   let resolvePromise;
   const promise = new Promise((resolve) => { resolvePromise = resolve; });
+  if (bot.cliType === 'claude') inputProtocol = require('./claudeInput').createClaudeInput({ prompt,
+    permissionMode: bot.permissionMode, probe, goal: !!goalProtocol, inputTimeoutMs,
+    write: value => child.stdin.write(value), end: () => child.stdin.end(), emit,
+    onPendingChange: armTimer, onExpire: failInput, onError: failInput });
+
+  function failInput(error) {
+    if (settled || aborted || timedOut || stopping) return;
+    inputProtocol?.stop({ preserveQuestions: true });
+    emit(RoomEvent.ERROR, error.message);
+    stopTree().finally(() => finish({ error: protocolError }));
+  }
 
   function armTimer() {
     clearTimeout(timer);
+    if (settled || aborted || timedOut || stopping || inputProtocol?.pending) return;
     timer = setTimeout(() => {
       // Mark before killing so the close handler cannot turn a timeout into a
       // successful finish (which would leave the message in a contradictory
       // state with an error string but status "done").
       timedOut = true;
       emit(RoomEvent.ERROR, I18n.t('超时：长时间无输出，已自动停止该 bot'));
-      killTree(child.pid).finally(() => finish({ error: 'timeout' }));
+      stopTree().finally(() => finish({ error: 'timeout' }));
     }, noBytesTimeoutMs || 90000);
   }
   armTimer();
 
   child.stdout.on('data', (d) => {
-    if (settled || aborted || timedOut) return;
+    if (settled || aborted || timedOut || stopping) return;
     armTimer();
-    const decoded = stdoutDecoder.write(d);
+    let decoded = stdoutDecoder.write(d);
+    if (!stdoutStarted && decoded) { stdoutStarted = true; decoded = decoded.replace(/^\uFEFF/, ''); }
     if (spec.outputMode === 'text') { parse(decoded, emit, acc); return; }
     stdoutBuf += decoded;
-    if (stdoutBuf.length > 4 * 1024 * 1024) {
+    if (Buffer.byteLength(stdoutBuf) > 4 * 1024 * 1024) {
       protocolError = I18n.t('CLI 输出单行超过 4 MB，已停止');
-      killTree(child.pid).finally(() => finish({ error: protocolError }));
+      stopTree().finally(() => finish({ error: protocolError }));
       return;
     }
     let idx;
@@ -264,16 +271,19 @@ function runCliBot({ bot, prompt, goalObjective, workspace, priorSessionId, log,
   });
 
   child.stderr.on('data', (d) => {
-    if (settled || aborted || timedOut) return;
+    if (settled || aborted || timedOut || stopping) return;
     armTimer();
     const s = stderrDecoder.write(d);
-    stderrParts.push(s);
-    if (stderrParts.join('').length > 4000) stderrParts = [stderrParts.join('').slice(-3000)];
-    if (log) { try { log(safeText(s)); } catch (_) { /* logging must not crash the process callback */ } }
+    if (!stderrDiscarded) {
+      stderrParts.push(s);
+      if (stderrParts.join('').length > 4000) { stderrParts = []; stderrDiscarded = true; }
+    }
+    // Redact only after decoding and joining chunks: a credential label/value
+    // can span arbitrary stderr data events.
   });
 
   child.on('error', (err) => {
-    if (settled) return;
+    if (settled || aborted || timedOut || stopping) return;
     emit(RoomEvent.ERROR, I18n.tpl`无法启动 ${spec.command}：${err.message}（请确认该 CLI 已安装并在 PATH 中）`);
     finish({ error: err.message });
   });
@@ -281,22 +291,37 @@ function runCliBot({ bot, prompt, goalObjective, workspace, priorSessionId, log,
   child.on('close', (code) => {
     clearTimeout(timer);
     if (settled) return;
+    // Cancellation/timeout closes may race with a final buffered response.
+    // Do not replay that response after a terminal decision.
+    if (aborted) { stopTree().finally(() => finish({ aborted: true })); return; }
+    if (timedOut) { stopTree().finally(() => finish({ error: 'timeout' })); return; }
+    if (stopping) { stopping.finally(() => finish({ error: protocolError })); return; }
+    const stderrTail = stderrDecoder.end();
+    if (!stderrDiscarded) stderrParts.push(stderrTail);
     const tail = stdoutDecoder.end();
     if (spec.outputMode === 'text') parse(tail, emit, acc);
     else stdoutBuf += tail;
     if (stdoutBuf.trim()) {
       try { parseLine(stdoutBuf.trim()); } catch (_) { /* ignore */ }
     }
-    if (aborted) { finish({ aborted: true }); return; }
-    if (timedOut) { finish({ error: 'timeout' }); return; }
     if (protocolError) { finish({ error: protocolError }); return; }
     if (code !== 0) {
-      emit(RoomEvent.ERROR, safeText(stderrParts.join('').trim().slice(-500)) || I18n.tpl`${spec.command} 异常退出（code ${code}）`);
+      const diagnostic = stderrDiscarded ? I18n.tpl`CLI 错误输出过长，已省略；退出码 ${code}` : safeText(stderrParts.join('').trim(), 4000).slice(-500);
+      if (log && diagnostic) { try { log(diagnostic); } catch (_) { /* logging must not crash cleanup */ } }
+      emit(RoomEvent.ERROR, diagnostic || I18n.tpl`${spec.command} 异常退出（code ${code}）`);
       finish({ error: protocolError || `exit_${code}` });
       return;
     }
     if (goalProtocol && !goalProtocol.resultVerified) {
       emit(RoomEvent.ERROR, I18n.t('Claude 连接已结束，但未确认原生目标的最终状态'));
+      finish({ error: protocolError }); return;
+    }
+    if (inputProtocol && !goalProtocol && !inputProtocol.resultVerified) {
+      emit(RoomEvent.ERROR, I18n.t('Claude 未返回完整结果，请重试'));
+      finish({ error: protocolError }); return;
+    }
+    if (['gemini', 'qwen', 'cursor', 'droid'].includes(bot.cliType) && !acc.finalAnswer) {
+      emit(RoomEvent.ERROR, I18n.t('CLI 已结束但未返回可识别的回复；请检查输出协议配置'));
       finish({ error: protocolError }); return;
     }
     if (bot.cliType === 'zcode' && !acc.zcodeResult) {
@@ -317,13 +342,14 @@ function runCliBot({ bot, prompt, goalObjective, workspace, priorSessionId, log,
   child.stdin.on('error', (err) => {
     if (!settled && !aborted && !timedOut) {
       emit(RoomEvent.ERROR, I18n.tpl`无法发送提示词：${err.message}`);
-      killTree(child.pid).finally(() => finish({ error: protocolError }));
+      stopTree().finally(() => finish({ error: protocolError }));
     }
   });
   if (spec.promptVia !== 'stdin') child.stdin.end();
   if (spec.promptVia === 'stdin') {
     try {
       if (goalProtocol) goalProtocol.start();
+      else if (inputProtocol) inputProtocol.start();
       else { child.stdin.write(prompt); child.stdin.end(); }
     } catch (err) { child.stdin.emit('error', err); }
   }
@@ -332,12 +358,15 @@ function runCliBot({ bot, prompt, goalObjective, workspace, priorSessionId, log,
     if (settled) return;
     settled = true;
     clearTimeout(timer);
+    inputProtocol?.stop({ preserveQuestions: !!extra?.error && !aborted });
     resolvePromise({
       text: acc.text,
       sessionId: null,
       usage: acc.usage,
       contextUsage: acc.contextUsage || null,
+      ...(acc.cleanupWarning ? { cleanupWarning: acc.cleanupWarning } : {}),
       ...(goalProtocol?.goal ? { goal: goalProtocol.goal } : {}),
+      ...(inputProtocol?.deferredInputs.length ? { deferredInputs: inputProtocol.deferredInputs } : {}),
       aborted: !!(extra && extra.aborted),
       error: (extra && extra.error) || null,
     });
@@ -347,8 +376,9 @@ function runCliBot({ bot, prompt, goalObjective, workspace, priorSessionId, log,
     if (settled) return Promise.resolve();
     aborted = true;
     goalProtocol?.stop();
+    inputProtocol?.stop();
     clearTimeout(timer);
-    return killTree(child.pid).finally(() => finish({ aborted: true }));
+    return stopTree().finally(() => finish({ aborted: true }));
   }
 
   function onEvent(fn) {
@@ -356,7 +386,8 @@ function runCliBot({ bot, prompt, goalObjective, workspace, priorSessionId, log,
     return () => listeners.delete(fn);
   }
 
-  return { promise, onEvent, cancel, pid: child.pid };
+  return { promise, onEvent, cancel, pid: child.pid,
+    ...(inputProtocol ? { respondInput: (requestId, answers) => inputProtocol.respondInput(requestId, answers) } : {}) };
 }
 
 module.exports = { runBot, runCliBot, killTree, customSpec, parseCustom };
