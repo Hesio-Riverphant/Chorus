@@ -13,7 +13,7 @@ const SOURCE_DOCS = ['docs/RELEASE.md', 'docs/ARCHITECTURE.md', 'docs/PLAN.md', 
 const SOURCE_WORKFLOWS = ['.github/workflows/windows.yml', '.github/workflows/desktop.yml'];
 const FORBIDDEN_COMPONENT = /^(?:data|logs|handoffs|workspace|\.git|\.codex|\.claude|\.kimi|\.kimi-code|\.agents|\.gemini|\.qwen|\.copilot|\.cursor|\.factory|\.zcode|\.trae|\.codebuddy|node_modules)$/i;
 const SECRET_FILE = /(?:^|\/)(?:\.env(?:\..*)?|auth\.json|credentials[^/]*|sessions\.json|rooms\.json|bots\.json|settings\.json)$|\.(?:key|pem|p12|pfx|jsonl|sqlite(?:3)?|db|log)$/i;
-const TEXT_EXTENSIONS = /\.(?:[cm]?js|json|html|css|md|txt|svg|ya?ml|ps1|cmd|nsh)$/i;
+const TEXT_EXTENSIONS = /\.(?:[cm]?js|json|html|css|md|txt|svg|ya?ml|ps1|cmd|sh|nsh)$/i;
 const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const slash = value => value.split(path.sep).join('/');
 

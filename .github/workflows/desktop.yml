@@ -33,6 +33,25 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y build-essential python3 libgtk-3-0t64 libnss3 libasound2t64 libgbm1 xvfb rpm
       - name: Install locked dependencies
         run: npm ci
+      - name: Allow sandboxed Electron on the disposable Ubuntu runner
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Ubuntu 24.04 requires an AppArmor userns grant for unpacked Electron.
+          # Scope it to this checkout; Chromium's sandbox stays enabled.
+          [[ "$GITHUB_WORKSPACE" =~ ^/home/runner/work/[A-Za-z0-9_./-]+$ ]]
+          cat > "$RUNNER_TEMP/chorus-ci-apparmor" <<EOF
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile chorus-ci-electron "$GITHUB_WORKSPACE/node_modules/electron/dist/electron" flags=(unconfined) {
+            userns,
+          }
+          profile chorus-ci-packaged "$GITHUB_WORKSPACE/dist/**/chorus" flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r "$RUNNER_TEMP/chorus-ci-apparmor"
       - name: Unit and process boundary tests
         run: npm test
       - name: Check publication inputs
@@ -54,6 +73,9 @@ jobs:
           for task in test:ui test:rooms test:capabilities test:workbench test:i18n package:release; do
             xvfb-run --auto-servernum npm run "$task"
           done
+      - name: Ubuntu archive, install and uninstall checks
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum bash scripts/verify-linux-release.sh
       - uses: actions/upload-artifact@v4
         with:
           name: Chorus-${{ runner.os }}-x64
