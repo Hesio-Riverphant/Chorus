@@ -29,6 +29,8 @@ const registrations = () => JSON.parse(run('powershell.exe', ['-NoProfile', '-Co
   run(binary, ['/S', '/currentuser', `/D=${target}`]);
   const uninstaller = path.join(target, 'Uninstall Chorus.exe');
   if (!fs.existsSync(uninstaller) || registrations().length !== 1 || !registrations()[0].UninstallString.includes(uninstaller)) throw new Error('Installation is not bound to the exact fixture.');
+  const inspection = JSON.parse(run('powershell.exe', ['-NoProfile', '-File', path.join(target, 'uninstall-chorus.ps1'), '-Inspect', '-Update']));
+  if (inspection.mode !== 'installed' || !inspection.update || inspection.sharedData !== null) throw new Error('Installed removal plan is not scoped to this upgrade.');
   const token = crypto.randomBytes(16).toString('hex');
   fs.writeFileSync(path.join(data, '.convoke-smoke-token'), token);
   const env = { ...process.env, CONVOKE_RELEASE_SMOKE_DIR: data }; delete env.ELECTRON_RUN_AS_NODE;
@@ -39,7 +41,10 @@ const registrations = () => JSON.parse(run('powershell.exe', ['-NoProfile', '-Co
   run(uninstaller, ['/S', '/currentuser', '--updated'], { cwd: fixture });
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline && (fs.existsSync(target) || registrations().length)) await new Promise(resolve => setTimeout(resolve, 500));
-  if (fs.existsSync(target) || registrations().length) throw new Error('Real NSIS removal left its app directory or registration.');
+  if (fs.existsSync(target) || registrations().length) {
+    const remaining = fs.existsSync(target) ? fs.readdirSync(target) : [];
+    throw new Error(`Real NSIS removal incomplete: ${JSON.stringify({ remaining, registrations: registrations() })}`);
+  }
   if (!fs.existsSync(path.join(data, 'rooms.json'))) throw new Error('Update-mode removal deleted separate fixture data.');
   console.log(JSON.stringify({ installed: true, isolatedStartup: true, terminal: true, nsisRemoval: true, registrationRemoved: true, updateModeRetainsData: true, interactiveFullRemoval: false }));
 })().catch(error => { console.error(error.message); process.exitCode = 1; });
