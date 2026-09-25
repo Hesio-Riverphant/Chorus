@@ -195,6 +195,17 @@ app.whenReady().then(async () => {
     const text = document.querySelector('.wb-agent').textContent;
     return text.includes(I18n.t('最终状态未知')) && text.includes(I18n.t('输出（原生返回摘要）')) && text.includes('Synthetic review complete');
   }));
+  check('reused child IDs in separate parent messages keep distinct workbench tabs', await evaluate(() => {
+    const first = messages(state.currentRoomId).find(message => message.id === 'subagent-link-fixture');
+    const payload = { roomId: state.currentRoomId, messageId: first.id, activity: first.activities[0], botName: 'Fixture' };
+    const firstTab = WorkbenchUI.openAgentDetail(payload);
+    const other = { ...payload, messageId: 'another-parent', activity: { ...payload.activity, subagent: { ...payload.activity.subagent, output: 'Another invocation' } } };
+    const secondTab = WorkbenchUI.openAgentDetail(other);
+    const repeatedTab = WorkbenchUI.openAgentDetail(payload);
+    const distinct = secondTab !== firstTab && repeatedTab === firstTab;
+    WorkbenchUI.closeTab(secondTab);
+    return distinct;
+  }));
   await evaluate(() => {
     const list = messages(state.currentRoomId); list.splice(list.findIndex(message => message.id === 'subagent-link-fixture'), 1);
     document.querySelector('[data-msg-id="subagent-link-fixture"]').remove();

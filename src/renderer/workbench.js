@@ -350,7 +350,7 @@ window.WorkbenchUI = (() => {
   }
 
   function openAgentDetail(payload) {
-    const existing = [...tabs.values()].find(tab => tab.kind === 'agent' && tab.payload?.activity?.id === payload.activity.id && tab.payload.roomId === payload.roomId);
+    const existing = [...tabs.values()].find(tab => tab.kind === 'agent' && tab.payload?.activity?.id === payload.activity.id && tab.payload.roomId === payload.roomId && tab.payload.messageId === payload.messageId);
     const tab = existing || addTab('agent', I18n.live(() => payload.activity.name || I18n.t('子代理'))); tab.payload = payload;
     paintAgent(tab); select(tab.id); return tab.id;
   }
