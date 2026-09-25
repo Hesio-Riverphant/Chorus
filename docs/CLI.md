@@ -28,6 +28,40 @@ Cursor emits complete assistant messages and tool events; its print protocol sup
 
 Question cards use Codex dynamic tools, Claude AskUserQuestion, and Kimi native ACP single-choice requests. Kimi 0.28.1 provides one question and supplied options only; free-text replies are not exposed by its ACP bridge. Other current print transports use text questions; structured interactive replies are not implemented for them. Questions expire after 60 seconds and remain answerable as a new targeted invocation. No native global configuration is changed.
 
+## Custom CLI subagent events
+
+### Current native visibility
+
+| Agent | Available child information | Validation and limits |
+| --- | --- | --- |
+| Codex / Claude Code | Delegation, status and returned child text | Existing native event adapters; real Claude delegation previously verified. Full child transcripts are not guaranteed. |
+| Qwen Code | Correlated child tools, results and returned text | Pinned official source and parser tests; account execution not verified. Background launch is not completion; actual child model is not inferred from parent metadata. |
+| CodeBuddy Code | Correlated child text and explicit task status events | Official protocol and parser tests; account execution not verified. The current one-shot launcher does not provide persistent background observation. |
+| Kimi Code | `Agent` tool task and returned summary | ACP protocol mapping and tests; complete inner events are discarded by upstream ACP. Background launch stays unconfirmed. |
+| Gemini, Copilot, Cursor, Droid, ZCode, Pi, OpenCode, Hermes | Existing ordinary tool/output display | No complete child-event mapping implemented for the current transports. |
+| Custom / future Agents | Versioned child snapshots through the contract below | Actual process transport tested; each native-to-JSONL bridge needs its own native acceptance. Plain text cannot provide hidden child state. |
+
+The parent may end while a child is still active. Chorus marks a missing final report as unknown; it does not claim that ending the parent completed or killed the child. The sidebar is a read-only view of received events. Full control or persistent background observation requires a separate native protocol implementation.
+
+Source mappings checked 2026-09-25: [Qwen correlation](https://github.com/QwenLM/qwen-code/blob/99fd76553ec91f07ac4cb321e888f3b4e1ea6031/packages/cli/src/nonInteractive/nonInteractiveHelpers.ts), [Qwen Agent parameters](https://github.com/QwenLM/qwen-code/blob/99fd76553ec91f07ac4cb321e888f3b4e1ea6031/packages/core/src/tools/agent/agent.ts), [CodeBuddy headless events](https://www.codebuddy.ai/docs/cli/headless), [CodeBuddy SDK](https://www.codebuddy.ai/docs/cli/sdk-typescript), [Kimi ACP](https://github.com/MoonshotAI/kimi-cli/blob/9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82/src/kimi_cli/acp/session.py).
+
+### Portable event contract
+
+Any new Agent can connect through **Add CLI → App JSONL events** if its executable or local protocol adapter emits this contract on stdout. This is a working transport interface, not automatic compatibility with every native CLI. A provider must expose actual child events; prose claiming delegation does not create a child record. Native credentials and permission settings remain under that CLI's control.
+
+Each line is a JSON object. Parent replies use `{"type":"text","text":"Parent answer"}`; failures use `{"type":"error","message":"Native failure"}`. Process exit remains the completion boundary. Child events are cumulative snapshots:
+
+```json
+{"type":"subagent","version":1,"id":"review-1","sequence":0,"status":"running","name":"Reviewer","task":"Review the selected change","output":"Reading the change"}
+{"type":"subagent","version":1,"id":"review-1","sequence":1,"status":"done","output":"Review complete"}
+```
+
+- `id` is unique within one invocation, 1–96 ASCII letters, digits, `_`, `.`, `:`, or `-`. `sequence` is a nonnegative safe integer that increases per child. Duplicate/stale snapshots are ignored; a terminal record cannot reopen. Use a new ID for a new attempt.
+- `status` is `running`, `done`, `error`, or `aborted`, reported from the actual child. Optional fields are `name` (100 characters), `task` (4,000), `output` (65,536 accepted; 16,384 displayed with truncation marked), `parentAgentId` (96), `model` (100), and `reasoningEffort` (24). Omitted fields retain the previous value. `output` replaces the previous snapshot; it is not a delta.
+- Provider identity comes from the configured CLI, not the event. Child output stays out of the parent reply and room routing. Common credentials are redacted. Each invocation has at most 100 child records and shares the bounded activity timeline.
+- Malformed child events report an error. When the parent invocation ends without a terminal child event, Chorus displays **Final status unknown**, retains received output, and does not claim the child was successfully stopped.
+- Clicking the child card opens the existing workbench. This contract does not add child control, invent hidden reasoning, or fetch private native history. Test an adapter using a disposable workspace and actual native events before treating a CLI as supported.
+
 ## Model selection and thinking
 
 - **Codex:** Refresh requests `model/list` from the native app server. Local metadata and labelled suggestions remain available if refresh fails.

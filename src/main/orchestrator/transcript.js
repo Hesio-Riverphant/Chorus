@@ -4,6 +4,16 @@ const { getDefaultPersona } = require('../../shared/botProfile');
 const { estimateTokens } = require('../../shared/util');
 const { DEFAULTS } = require('../../shared/constants');
 const { parseMentions } = require('../../shared/mention');
+const MessageContent = require('../../shared/messageContent');
+
+const incomplete = message => ['error', 'aborted'].includes(message.status);
+function transcriptText(message) {
+  const text = typeof message.text === 'string' ? message.text : '';
+  if (!incomplete(message)) return text;
+  const progress = MessageContent.progress(message);
+  if (progress === text || (message.activities || []).some(activity => activity.phase === 'commentary' && activity.detail === text)) return progress;
+  return [progress, text].filter(Boolean).join('\n\n');
+}
 
 function labelOf(msg, bots) {
   if (msg.authorType === 'human') return '房主';
@@ -14,15 +24,15 @@ function labelOf(msg, bots) {
 
 function buildMessagesText(messages, bots) {
   return messages
-    .filter((m) => (typeof m.text === 'string' && m.text.trim()) || m.error)
-    .map((m) => `${labelOf(m, bots)}：${m.text || ''}${['error', 'aborted'].includes(m.status)
+    .filter((m) => transcriptText(m).trim() || m.error)
+    .map((m) => `${labelOf(m, bots)}：${transcriptText(m)}${incomplete(m)
       ? `\n【未完成的执行；请依据最新请求决定是否续接，先核对已有副作用】${m.error || '执行已中断'}` : ''}`)
     .join('\n');
 }
 
 function isTranscriptMessage(message, bot) {
   return !message.supersededBy && ['done', 'error', 'aborted'].includes(message.status) &&
-    ((typeof message.text === 'string' && message.text.trim()) || message.error) &&
+    (transcriptText(message).trim() || message.error) &&
     (!bot || !Array.isArray(message.audienceBotIds) || message.audienceBotIds.includes(bot.id)) &&
     (!bot || !['plan', 'goal'].includes(message.mode) || !Array.isArray(message.modeTargetIds) || message.modeTargetIds.includes(bot.id));
 }
@@ -73,9 +83,26 @@ function selectTranscript(messages, bot, bots, { roundId = null, catchupMessages
       historyTokens = selected.reduce((total, message) => total + estimateTokens(buildMessagesText([message], bots) + '\n'), 0);
     }
   }
-  const current = messages.slice(anchor).filter(visible);
+  let current = messages.slice(anchor).filter(visible);
+  // Superseding a failed attempt does not undo its side effects. Recover only
+  // its visible failure chain, never superseded successful answers or other bots.
+  const recovered = new Set([...selected, ...current]);
+  const byId = new Map(messages.map(message => [message.id, message]));
+  for (let attempt of [...selected, ...current]) {
+    while (attempt.authorType === 'bot' && incomplete(attempt) && attempt.roundId && attempt.supersedes) {
+      const previous = byId.get(attempt.supersedes);
+      if (!previous || recovered.has(previous) || previous.authorType !== 'bot' || previous.authorId !== attempt.authorId ||
+          previous.roundId !== attempt.roundId || previous.supersededBy !== attempt.id || !incomplete(previous) ||
+          !visible({ ...previous, supersededBy: undefined })) break;
+      recovered.add(previous);
+      attempt = previous;
+    }
+  }
+  selected = messages.slice(0, anchor).filter(message => recovered.has(message));
+  current = messages.slice(anchor).filter(message => recovered.has(message));
+  historyTokens = selected.reduce((total, message) => total + estimateTokens(buildMessagesText([message], bots) + '\n'), 0);
   return { messages: [...selected, ...current], historyMessages: selected.length, currentMessages: current.length,
-    historyTokenEstimate: historyTokens, omittedHistoryMessages: eligible.length - selected.length, historyTokenBudget: budget };
+    historyTokenEstimate: historyTokens, omittedHistoryMessages: eligible.filter(message => !recovered.has(message)).length, historyTokenBudget: budget };
 }
 
 function buildRosterText(bot, bots, room) {

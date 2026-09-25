@@ -764,7 +764,7 @@ class Orchestrator {
     // Preserve pricing provenance with each new message; old messages remain untouched.
     persistence.updateMessage(run.roomId, message.id, { costInfo });
     const activities = (message.activities || []).map((activity) => activity.status === 'running'
-      ? { ...activity, status: run.stopping || result.aborted ? 'aborted' : result.error ? 'error' : activity.kind === 'subagent' ? activity.status : 'done' } : activity);
+      ? { ...activity, status: activity.kind === 'subagent' ? 'unknown' : run.stopping || result.aborted ? 'aborted' : result.error ? 'error' : 'done' } : activity);
     persistence.updateMessage(run.roomId, message.id, { activities });
     this.emit({ kind: 'message_update', roomId: run.roomId, id: message.id, patch: { activities, costInfo } });
 

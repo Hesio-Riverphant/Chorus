@@ -13,6 +13,130 @@ const vm = require('node:vm');
 const { EventEmitter } = require('node:events');
 const { PassThrough } = require('node:stream');
 
+test('portable child snapshots validate identity, ordering, redaction and invocation ownership', () => {
+  const { subagentSnapshot } = require('../src/main/adapters/subagentSnapshots');
+  const cliType = 'custom_' + 'b'.repeat(32), acc = { cliType }, events = [];
+  const emit = (type, value) => events.push({ type, value });
+  const base = { type: 'subagent', version: 1, id: 'c1', sequence: 0, status: 'running' };
+  subagentSnapshot({ ...base, output: 'token=synthetic-private-value\nWorking' }, acc, emit);
+  subagentSnapshot({ ...base, sequence: 1, output: 'Complete', status: 'done' }, acc, emit);
+  subagentSnapshot({ ...base, sequence: 2, output: 'cannot reopen' }, acc, emit);
+  assert.equal(acc.activities[0].status, 'done');
+  assert.equal(acc.activities[0].subagent.output, 'Complete');
+  assert.ok(!JSON.stringify(events).includes('synthetic-private-value'));
+  const other = { cliType };
+  subagentSnapshot({ ...base, output: 'Different invocation' }, other, emit);
+  assert.equal(other.activities[0].subagent.output, 'Different invocation');
+  assert.equal(acc.activities[0].subagent.output, 'Complete');
+  for (const patch of [{ id: '../other' }, { version: 2 }, { sequence: -1 }, { status: 'invented' }, { task: {} }, { output: 'x'.repeat(65537) }]) {
+    subagentSnapshot({ ...base, ...patch }, acc, emit);
+    assert.equal(events.at(-1).type, 'error');
+  }
+  for (let i = 0; i < 101; i++) subagentSnapshot({ ...base, id: 'bounded' + i, output: 'x'.repeat(18000) }, acc, emit);
+  assert.equal(acc.childSnapshots.size, 100);
+  assert.ok(acc.activities.at(-1).subagent.output.length <= 16384);
+  assert.equal(acc.activities.at(-1).subagent.outputTruncated, true);
+});
+
+test('Qwen child progress and foreground results are isolated, while background launch stays unconfirmed', () => {
+  const parse = require('../src/main/adapters/mainstreamCliSpecs').MAINSTREAM_PARSERS.qwen;
+  const acc = {}, events = []; const emit = (type, value) => events.push({ type, value });
+  const send = value => parse(JSON.stringify(value), emit, acc);
+  send({ type: 'assistant', message: { content: ['foreground', 'background'].map(id => ({ type: 'tool_use', id, name: 'agent',
+    input: { description: id, prompt: 'Inspect ' + id, ...(id === 'foreground' ? { run_in_background: false } : {}) } })) } });
+  send({ type: 'assistant', parent_tool_use_id: 'foreground', message: { id: 'child-output', model: 'parent-model', content: [{ type: 'text', text: 'Child @Other' }, { type: 'tool_use', id: 'read', name: 'read_file' }] } });
+  send({ type: 'user', parent_tool_use_id: 'foreground', message: { content: [{ type: 'tool_result', tool_use_id: 'read', content: 'Read result' }] } });
+  send({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'foreground', content: 'Final child result' }, { type: 'tool_result', tool_use_id: 'background', content: 'Background task started' }] } });
+  send({ type: 'assistant', parent_tool_use_id: 'unknown', message: { content: [{ type: 'text', text: 'Unowned child' }] } });
+  send({ type: 'result', result: 'Parent final', usage: {} });
+  const child = acc.activities.find(value => value.subagent?.agentId === 'foreground');
+  assert.equal(child.status, 'done'); assert.equal(child.subagent.cliType, 'qwen');
+  assert.match(child.subagent.output, /Child @Other/); assert.match(child.subagent.output, /Read result/);
+  assert.match(child.subagent.output, /Final child result/); assert.equal(child.subagent.model, '');
+  assert.equal(acc.activities.find(value => value.subagent?.agentId === 'background').status, 'running');
+  assert.deepEqual(events.filter(event => ['text', 'text_replace'].includes(event.type)).map(event => event.value), ['Parent final']);
+});
+
+test('CodeBuddy retains its identity and does not mark a background launch completed', () => {
+  const acc = { cliType: 'codebuddy' }, events = [];
+  const send = value => PARSERS.codebuddy(JSON.stringify(value), (type, value) => events.push({ type, value }), acc);
+  send({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'agent-call', name: 'Agent', input: { prompt: 'Review', run_in_background: true } }] } });
+  send({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'agent-call', content: 'Background started' }] } });
+  assert.equal(acc.activities[0].status, 'running');
+  send({ type: 'system', subtype: 'task_started', task_id: 'child-task', tool_use_id: 'agent-call', task_type: 'Agent' });
+  send({ type: 'assistant', parent_tool_use_id: 'agent-call', message: { id: 'child-m', content: [{ type: 'text', text: 'Child output' }] } });
+  send({ type: 'system', subtype: 'task_updated', task_id: 'child-task', patch: { status: 'completed' } });
+  assert.equal(acc.activities[0].subagent.cliType, 'codebuddy'); assert.equal(acc.activities[0].status, 'done');
+  assert.ok(!events.some(event => event.type === 'text'));
+});
+
+test('native child dispatch replays retain completion and final errors survive prior progress', () => {
+  for (const cli of ['claude', 'codebuddy', 'qwen']) {
+    const acc = { cliType: cli }, emit = () => {};
+    const parse = cli === 'qwen' ? require('../src/main/adapters/mainstreamCliSpecs').MAINSTREAM_PARSERS.qwen : PARSERS[cli];
+    const send = value => parse(JSON.stringify(value), emit, acc);
+    const dispatch = { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'child', name: cli === 'qwen' ? 'agent' : 'Agent', input: { prompt: 'Inspect', run_in_background: false } }] } };
+    send(dispatch);
+    send({ type: 'assistant', parent_tool_use_id: 'child', message: { id: 'progress', content: [{ type: 'text', text: 'Checking file now' }] } });
+    const result = { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'child', is_error: true, content: 'FINAL FAILURE: permission denied' }] } };
+    send(result); send(result); send(dispatch);
+    assert.equal(acc.activities[0].status, 'error', cli);
+    assert.match(acc.activities[0].subagent.output, /Checking file now/);
+    assert.match(acc.activities[0].subagent.output, /FINAL FAILURE: permission denied/);
+    assert.equal(acc.activities[0].subagent.output.split('FINAL FAILURE').length, 2);
+    if (cli !== 'qwen') {
+      send({ type: 'system', subtype: 'task_notification', tool_use_id: 'child', status: 'failed', summary: 'Final summary', patch: { error: 'Native error detail' } });
+      assert.match(acc.activities[0].subagent.output, /Final summary/);
+      assert.match(acc.activities[0].subagent.output, /Native error detail/);
+    }
+  }
+});
+
+test('Kimi Agent tool exposes returned summaries without inventing an inner stream or background completion', () => {
+  const { kimiToolSubagent } = require('../src/main/adapters/subagents');
+  const acc = {}, emit = () => {};
+  const content = text => [{ type: 'content', content: { type: 'text', text } }];
+  assert.equal(kimiToolSubagent({ sessionUpdate: 'tool_call', toolCallId: 'ordinary', title: 'ReadFile' }, acc, emit), false);
+  assert.equal(kimiToolSubagent({ sessionUpdate: 'tool_call', toolCallId: 'ordinary2', title: 'AgentReader' }, acc, emit), false);
+  kimiToolSubagent({ sessionUpdate: 'tool_call', toolCallId: 'streamed', title: 'Agent: Inspect' }, acc, emit);
+  kimiToolSubagent({ sessionUpdate: 'tool_call_update', toolCallId: 'streamed', content: content('{"prompt":') }, acc, emit);
+  assert.equal(acc.activities[0].subagent.output, '');
+  kimiToolSubagent({ sessionUpdate: 'tool_call_update', toolCallId: 'streamed', content: content('{"prompt":"Inspect", "description":"Review"}') }, acc, emit);
+  assert.equal(acc.activities[0].subagent.task, 'Inspect'); assert.equal(acc.activities[0].subagent.output, '');
+  kimiToolSubagent({ sessionUpdate: 'tool_call_update', toolCallId: 'streamed', status: 'completed', content: content('agent_id: agent-0\nstatus: completed\n\n[summary]\nDone') }, acc, emit);
+  assert.equal(acc.activities[0].subagent.agentId, 'agent-0'); assert.equal(acc.activities[0].status, 'done');
+  for (const background of [false, true]) {
+    const id = 'agent-' + background;
+    kimiToolSubagent({ sessionUpdate: 'tool_call', toolCallId: id, title: 'Agent', content: content(JSON.stringify({ prompt: 'Review', run_in_background: background })) }, acc, emit);
+    kimiToolSubagent({ sessionUpdate: 'tool_call_update', toolCallId: id, status: 'completed', content: content(background ? 'Background task started' : 'Returned summary') }, acc, emit);
+    const value = acc.activities.find(activity => activity.subagent.agentId === id);
+    assert.equal(value.subagent.cliType, 'kimi'); assert.equal(value.subagent.outputKind, 'summary');
+    assert.equal(value.status, background ? 'running' : 'done');
+    assert.equal(value.subagent.output, background ? 'Background task started' : 'Returned summary');
+  }
+});
+
+test('custom CLI emits real child snapshots through the actual process transport', async t => {
+  const { runBot } = require('../src/main/adapters/cliAdapter');
+  const cliType = 'custom_' + 'c'.repeat(32);
+  const code = `process.stdin.resume();process.stdin.on('end',()=>{for(const e of [
+    {type:'subagent',version:1,id:'actual-child',sequence:0,status:'running',task:'Synthetic transport'},
+    {type:'subagent',version:1,id:'actual-child',sequence:1,status:'done',output:'Returned child output'},
+    {type:'text',text:'Parent complete'}])process.stdout.write(JSON.stringify(e)+'\\n')})`;
+  const temporary = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'chorus-child-events-'));
+  t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const program = path.join(temporary, 'fixture.cjs'); fs.writeFileSync(program, code);
+  const handle = runBot({ bot: { cliType, permissionMode: 'full' }, workspace: temporary, prompt: 'Synthetic request', noBytesTimeoutMs: 10000,
+    cliSettings: { enabledCliIds: [cliType], cliProfiles: [{ id: cliType, label: 'Transport fixture', command: process.execPath,
+      args: [program], promptMode: 'stdin', outputMode: 'jsonl' }] } });
+  const events = []; handle.onEvent((type, payload) => events.push({ type, payload }));
+  const result = await handle.promise;
+  assert.equal(result.error, null); assert.equal(result.text, 'Parent complete');
+  const children = events.filter(event => event.type === 'activity' && event.payload.kind === 'subagent');
+  assert.deepEqual(children.map(event => event.payload.status), ['running', 'done']);
+  assert.equal(children.at(-1).payload.subagent.output, 'Returned child output');
+});
+
 function parser(cli) {
   const acc = {}, events = [];
   return { acc, events, send: value => PARSERS[cli](JSON.stringify(value), (type, payload) => events.push({ type, payload }), acc),
@@ -35,7 +159,7 @@ test('Claude forwards child output without leaking it into the parent answer or 
   assert.equal(f.children().length, 1);
   assert.equal(f.children()[0].status, 'done');
   assert.equal(f.children()[0].subagent.agentId, 'child-1');
-  assert.equal(f.children()[0].subagent.output, 'Child output @OtherMember');
+  assert.equal(f.children()[0].subagent.output, 'Child output @OtherMember\n\nCompleted');
   assert.equal(f.children()[0].subagent.model, 'child-model');
   assert.equal(f.acc.cum, undefined);
 });

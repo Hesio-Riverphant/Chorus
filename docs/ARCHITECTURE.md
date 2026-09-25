@@ -29,7 +29,9 @@ Plan and goal are conversation draft modes passed with the human message. Routin
 
 Native extension inventories are reduced to safe metadata and stored in the application's data directory, keyed by Agent and working directory. Opening management reuses this inventory; manual Update performs discovery. Execution consumes the inventory and applies invocation-specific overrides. Native configuration, credentials and installations stay with their Agent.
 
-Native subagents are normalized only from explicit Claude and Codex protocol events. Dispatching member, child identity, task, status and available output remain attached to the parent message, outside room reply routing. Missing native output is not reconstructed from arbitrary CLI history files. Per invocation, the adapter retains at most 100 child records and 16,384 characters of output per child; truncation is marked. The workbench displays the available record rather than claiming a complete native transcript.
+Subagent observations use explicit Codex, Claude, CodeBuddy and Qwen protocol relationships; Kimi ACP supplies the Agent tool's returned summary. Custom JSONL CLIs can implement the versioned child snapshot contract in [CLI integration](CLI.md). Dispatching member, child identity, task, status and available output remain attached to the parent message, outside room reply routing. Missing native output is not reconstructed from arbitrary CLI history files. Per invocation, the adapter retains at most 100 child records and 16,384 characters of output per child; truncation is marked. Unfinished children become status-unknown when the parent exits. The workbench displays available observations, not a complete native transcript; providers that do not expose child relationships remain unsupported.
+
+Failed-turn continuation follows the same-author, same-round supersession chain and rechecks each message's recipient scope. It includes failed public progress and errors while excluding hidden reasoning and raw tool payloads; successful superseded answers are not replayed.
 
 ## Workbench and data
 

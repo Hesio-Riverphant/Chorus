@@ -169,7 +169,7 @@ app.whenReady().then(async () => {
 
   await evaluate(() => {
     const message = { id: 'subagent-link-fixture', roomId: state.currentRoomId, authorType: 'bot', status: 'streaming', createdAt: Date.now(), text: '', activities: [{
-      id: 'codex:subagent:fixture', kind: 'subagent', name: 'Fixture review', status: 'running', subagent: { agentId: 'fixture', parentAgentId: 'fixture-parent', task: 'Inspect synthetic file', output: 'Synthetic review started', model: 'fixture-model' },
+      id: 'custom:subagent:fixture', kind: 'subagent', name: 'Fixture review', status: 'running', subagent: { agentId: 'fixture', parentAgentId: 'fixture-parent', cliType: 'custom_' + 'a'.repeat(32), task: 'Inspect synthetic file', output: 'Synthetic review started', model: 'fixture-model' },
     }] };
     messages(state.currentRoomId).push(message);
     const row = bubbleEl(message); document.getElementById('messages').append(row);
@@ -185,6 +185,15 @@ app.whenReady().then(async () => {
   });
   check('open subagent workbench updates when the recorded native output changes', await evaluate(() => {
     const text = document.querySelector('.wb-agent').textContent; return text.includes('Synthetic review complete') && !text.includes('Synthetic review started');
+  }));
+  await evaluate(() => {
+    const activity = messages(state.currentRoomId).find(message => message.id === 'subagent-link-fixture').activities[0];
+    activity.status = 'unknown'; activity.subagent.outputKind = 'summary';
+    WorkbenchUI.refreshAgentDetails();
+  });
+  check('unconfirmed child completion and returned-summary boundaries are visible', await evaluate(() => {
+    const text = document.querySelector('.wb-agent').textContent;
+    return text.includes(I18n.t('最终状态未知')) && text.includes(I18n.t('输出（原生返回摘要）')) && text.includes('Synthetic review complete');
   }));
   await evaluate(() => {
     const list = messages(state.currentRoomId); list.splice(list.findIndex(message => message.id === 'subagent-link-fixture'), 1);

@@ -16,7 +16,8 @@ const BUILTINS = [
   { id: 'pi', label: 'Pi', historyModeSupport: 'verified', historyFlag: '--no-session' },
   { id: 'opencode', label: 'OpenCode', historyModeSupport: 'unsupported' },
   { id: 'hermes', label: 'Hermes', historyModeSupport: 'unknown' },
-].map(item => Object.freeze({ ...item, builtin: true }));
+].map(item => Object.freeze({ ...item, builtin: true,
+  subagentSupport: ['claude', 'codex', 'codebuddy', 'qwen'].includes(item.id) ? 'events' : item.id === 'kimi' ? 'summary' : 'unavailable' }));
 const isCliId = value => typeof value === 'string' && (BUILTINS.some(item => item.id === value) || /^custom_[a-f0-9]{32}$/.test(value));
 
 function normalizeProfiles(profiles = []) {
@@ -50,7 +51,8 @@ function validateArgs(args) {
 }
 
 function listProfiles(settings = {}) {
-  return [...BUILTINS, ...normalizeProfiles(settings.cliProfiles).map(profile => ({ ...profile, builtin: false, historyModeSupport: 'unknown' }))];
+  return [...BUILTINS, ...normalizeProfiles(settings.cliProfiles).map(profile => ({ ...profile, builtin: false, historyModeSupport: 'unknown',
+    subagentSupport: profile.outputMode === 'jsonl' ? 'protocol' : 'unavailable' }))];
 }
 function findProfile(id, settings = {}) { return listProfiles(settings).find(item => item.id === id); }
 function normalizeEnabledCliIds(ids, settings = {}) {

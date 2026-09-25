@@ -1,5 +1,7 @@
 'use strict';
 
+const { isCliId } = require('../cliRegistry');
+
 const MAX_ACTIVITIES = 100;
 
 // Activity data comes from external processes. Never persist raw tool inputs,
@@ -24,7 +26,7 @@ function normalizeActivity(value) {
   return {
     id: safeText(value.id, 160), kind: value.kind,
     name: safeText(value.name, 100),
-    status: ['running', 'done', 'error', 'aborted'].includes(value.status) ? value.status : 'running',
+    status: ['running', 'done', 'error', 'aborted'].includes(value.status) || value.kind === 'subagent' && value.status === 'unknown' ? value.status : 'running',
     summary: safeText(value.summary, 240),
     // Public progress messages are the only copy of that text after phase
     // separation. Preserve them through repeated normalization/persistence;
@@ -37,7 +39,8 @@ function normalizeActivity(value) {
       agentId: safeText(value.subagent.agentId, 160), parentAgentId: safeText(value.subagent.parentAgentId, 160),
       task: safeText(value.subagent.task, 4000), output: safeText(value.subagent.output, 16384),
       model: safeText(value.subagent.model, 100), reasoningEffort: safeText(value.subagent.reasoningEffort, 24),
-      cliType: ['codex', 'claude'].includes(value.subagent.cliType) ? value.subagent.cliType : '',
+      cliType: isCliId(value.subagent.cliType) ? value.subagent.cliType : '',
+      ...(value.subagent.outputKind === 'summary' ? { outputKind: 'summary' } : {}),
       outputTruncated: value.subagent.outputTruncated === true || (typeof value.subagent.output === 'string' && value.subagent.output.length > 16384),
     } } : {}),
   };

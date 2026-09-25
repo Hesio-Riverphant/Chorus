@@ -303,7 +303,7 @@
     <p id="cliProfilePromptHelp" class="hint"></p>
     <details id="cliProfileAdvanced" class="bot-advanced"><summary data-i18n="输出与历史选项">输出与历史选项</summary>
       <label class="field"><span data-i18n="输出格式">输出格式</span><select id="cliProfileOutputMode"><option value="text" data-i18n="纯文本">纯文本</option><option value="jsonl" data-i18n="统一 JSONL 事件">统一 JSONL 事件</option></select></label>
-      <p id="cliProfileJsonlHelp" class="hint" hidden data-i18n="仅用于明确输出本应用约定事件的程序：每行一个 JSON，type 为 text、done 或 error。各 CLI 自带的 JSON 输出不一定兼容。">仅用于明确输出本应用约定事件的程序：每行一个 JSON，type 为 text、done 或 error。各 CLI 自带的 JSON 输出不一定兼容。</p>
+      <p id="cliProfileJsonlHelp" class="hint" hidden data-i18n="程序需输出 Chorus JSONL 事件：text、error，以及带版本和顺序号的 subagent 快照。子代理可进入侧边工作台；具体格式见 docs/CLI.md。原生 JSON 输出需先适配。">程序需输出 Chorus JSONL 事件：text、error，以及带版本和顺序号的 subagent 快照。子代理可进入侧边工作台；具体格式见 docs/CLI.md。原生 JSON 输出需先适配。</p>
       <label class="field"><span data-i18n="附加启动参数 · 可选，每行一个">附加启动参数 · 可选，每行一个</span><textarea id="cliProfileHistoryArgs" rows="3" spellcheck="false"></textarea></label>
       <p class="hint" data-i18n="仅填写该 CLI 文档支持的启动选项。实际记录保存方式由对应 CLI 决定。">仅填写该 CLI 文档支持的启动选项。实际记录保存方式由对应 CLI 决定。</p>
     </details>

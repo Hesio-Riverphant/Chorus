@@ -51,7 +51,7 @@ function renderActivities(row, activities) {
     entry.open = activityExpansion.get(expansionKey) === true;
     entry.addEventListener('toggle', () => { if (entry.isConnected) activityExpansion.set(expansionKey, entry.open); });
     const title = document.createElement('summary');
-    const status = { running: I18n.t('进行中'), done: I18n.t('已完成'), error: I18n.t('失败'), aborted: I18n.t('已中断') }[activity.status] || activity.status;
+    const status = { running: I18n.t('进行中'), done: I18n.t('已完成'), error: I18n.t('失败'), aborted: I18n.t('已中断'), unknown: I18n.t('最终状态未知') }[activity.status] || activity.status;
     I18n.write(title, () => activity.kind === 'reasoning' ? [I18n.t('思考'), status].filter(Boolean).join(' · ')
       : [activity.name || activity.kind, status, activity.summary].filter(Boolean).join(' · '));
     const text = document.createElement('pre'); text.textContent = activity.detail || '';

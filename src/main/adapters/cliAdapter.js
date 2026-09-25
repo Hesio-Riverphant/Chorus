@@ -16,6 +16,7 @@ const { safeText } = require('./activities');
 const { normalizeExecutionMode } = require('../../shared/reasoning');
 
 const { terminateTree } = require('./processTree');
+const { subagentSnapshot } = require('./subagentSnapshots');
 function killTree(pid) { return terminateTree(pid, { spawnProcess: spawn }); }
 
 // User-defined launch contracts preserve literal argv and native credentials.
@@ -35,6 +36,7 @@ function parseCustom(chunk, emit, acc) {
   let value;
   try { value = JSON.parse(chunk); } catch (_) { emit('text', chunk); return; }
   if (!value || typeof value !== 'object') { emit('text', chunk); return; }
+  if (subagentSnapshot(value, acc, emit)) return;
   if (value.type === 'error' || value.error) emit('error', value.message || value.error?.message || String(value.error));
   else if (typeof value.text === 'string') emit('text', value.text);
   else if (typeof value.delta === 'string') emit('text', value.delta);
@@ -117,7 +119,7 @@ function runCliBot({ bot, prompt, goalObjective, workspace, priorSessionId, log,
     executable = { command: /[\s()]/.test(launchCommand) ? `"${launchCommand}"` : launchCommand, argsPrefix: [] };
   }
   const command = executable.command;
-  const acc = { text: '', sessionId: priorSessionId || null, usage: null };
+  const acc = { text: '', sessionId: priorSessionId || null, usage: null, cliType: bot.cliType };
   const listeners = new Set();
   let protocolError = null;
   let goalProtocol;

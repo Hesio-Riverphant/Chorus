@@ -39,6 +39,21 @@ test('public host relay can address a failed member with its incomplete work', a
   assert.match(f.calls.at(-1).prompt, /Provider disconnected unexpectedly/);
 });
 
+test('retry and mention continuation retain every failed attempt partial output', async () => {
+  for (const continuation of ['retry', 'mention']) {
+    const f = fixture({ settings: { catchupMessages: 0 }, runBot: (_args, index) => complete(index < 3
+      ? { text: `Committed step ${index}`, error: `Failure ${index}` } : {}) });
+    await f.orchestrator.handleHuman('r1', '@Bot0 original task');
+    await f.orchestrator.retry('r1', f.messages.r1.find(message => message.authorType === 'bot').id);
+    const failed = f.messages.r1.findLast(message => message.authorType === 'bot');
+    if (continuation === 'retry') await f.orchestrator.retry('r1', failed.id);
+    else await f.orchestrator.handleHuman('r1', '@Bot0 continue');
+    for (const text of ['Committed step 1', 'Committed step 2', 'Failure 1', 'Failure 2']) {
+      assert.ok(f.calls.at(-1).prompt.includes(text), `${continuation} lost ${text}`);
+    }
+  }
+});
+
 function fixture({ bots = 2, settings = {}, mode = 'sequential', runBot, capabilities } = {}) {
   const members = Array.from({ length: bots }, (_, i) => ({
     id: `b${i}`, name: `Bot${i}`, cliType: 'codex', enabled: true,
@@ -644,7 +659,7 @@ test('Claude goal receives its current human objective separately from room hist
   assert.equal(f.calls[2].goalObjective, undefined);
 });
 
-test('successful parent completion preserves an unconfirmed child running state instead of fabricating completion', async () => {
+test('successful parent completion marks an unconfirmed child state unknown instead of fabricating completion', async () => {
   const f = fixture({ bots: 1, runBot: () => ({ ...complete(), onEvent(emit) {
     emit('activity', { id: 'native-child', kind: 'subagent', name: 'Synthetic child', status: 'running',
       subagent: { agentId: 'child-thread', parentAgentId: 'parent-thread', cliType: 'codex', task: 'Synthetic task', output: 'Still working' } });
@@ -654,12 +669,30 @@ test('successful parent completion preserves an unconfirmed child running state 
   const reply = f.messages.r1.find(message => message.authorType === 'bot');
   assert.equal(reply.status, 'done');
   const child = reply.activities.find(activity => activity.id === 'native-child');
-  assert.equal(child.status, 'running');
+  assert.equal(child.status, 'unknown');
   assert.equal(child.subagent.parentAgentId, 'parent-thread');
   assert.equal(child.subagent.output, 'Still working');
   assert.equal(reply.activities.find(activity => activity.id === 'ordinary-tool').status, 'done');
   const finalActivities = f.events.filter(event => event.kind === 'message_update' && event.id === reply.id && event.patch?.activities).at(-1).patch.activities;
-  assert.equal(finalActivities.find(activity => activity.id === 'native-child').status, 'running');
+  assert.equal(finalActivities.find(activity => activity.id === 'native-child').status, 'unknown');
+});
+
+test('failed or aborted parents leave unconfirmed children unknown and preserve child terminal reports', async () => {
+  for (const result of [{ error: 'Parent transport failed' }, { aborted: true }]) {
+    const f = fixture({ bots: 1, runBot: () => ({ ...complete(result), onEvent(emit) {
+      for (const status of ['running', 'done', 'error', 'aborted']) {
+        emit('activity', { id: `child-${status}`, kind: 'subagent', name: 'Synthetic child', status,
+          subagent: { agentId: `thread-${status}`, cliType: 'codex', output: `Last child report: ${status}` } });
+      }
+    } }) });
+    await f.orchestrator.handleHuman('r1', 'Synthetic parent task');
+    const reply = f.messages.r1.find(message => message.authorType === 'bot');
+    for (const status of ['running', 'done', 'error', 'aborted']) {
+      const child = reply.activities.find(activity => activity.id === `child-${status}`);
+      assert.equal(child.status, status === 'running' ? 'unknown' : status);
+      assert.equal(child.subagent.output, `Last child report: ${status}`);
+    }
+  }
 });
 
 

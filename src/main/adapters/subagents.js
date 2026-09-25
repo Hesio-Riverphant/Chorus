@@ -30,7 +30,8 @@ function record(acc, emit, key, patch) {
     summary: next.task || I18n.t('原生子代理'), detail: next.output,
     subagent: { agentId: next.agentId || key, parentAgentId: next.parentAgentId || '', task: next.task,
       output: next.output, outputTruncated: next.outputTruncated, model: next.model || '',
-      reasoningEffort: next.reasoningEffort || '', cliType: next.cliType } });
+      reasoningEffort: next.reasoningEffort || '', cliType: next.cliType,
+      ...(next.outputKind === 'summary' ? { outputKind: 'summary' } : {}) } });
   return next;
 }
 function message(acc, emit, key, id, text, delta = false) {
@@ -49,42 +50,44 @@ function message(acc, emit, key, id, text, delta = false) {
 
 // Only consume Claude's explicit subagent envelopes. These texts must never be
 // emitted as the parent bot's answer or participate in room mention routing.
-function claudeSubagent(o, acc, emit) {
+function claudeSubagent(o, acc, emit, cliType = 'claude') {
   const store = state(acc);
   if (o.type === 'system' && ['task_started', 'task_updated', 'task_notification'].includes(o.subtype)) {
     const taskId = typeof o.task_id === 'string' ? o.task_id : '';
     const key = store.tasks.get(taskId) || o.tool_use_id || taskId;
     const previous = store.agents.get(key);
-    if (o.subtype === 'task_started' && o.task_type !== 'local_agent' && !o.subagent_type && !previous) return false;
+    if (o.subtype === 'task_started' && o.task_type !== (cliType === 'codebuddy' ? 'Agent' : 'local_agent') && !o.subagent_type && !previous) return false;
     if (o.subtype !== 'task_started' && !previous) return false;
     if (taskId && store.tasks.size < LIMIT) store.tasks.set(taskId, key);
     const patch = o.patch || {};
-    record(acc, emit, key, { cliType: 'claude', agentId: taskId || previous?.agentId || key,
+    record(acc, emit, key, { cliType, agentId: taskId || previous?.agentId || key,
       parentAgentId: typeof o.owned_by_subagent === 'string' ? o.owned_by_subagent : previous?.parentAgentId || '',
       name: o.description || patch.description || previous?.name || o.subagent_type,
       task: o.prompt || previous?.task || o.description || '',
-      status: status(o.status || patch.status || previous?.status),
-      ...(o.summary || patch.error ? { output: previous?.output || o.summary || patch.error } : {}) });
+      status: status(o.status || patch.status || previous?.status) });
+    message(acc, emit, key, 'task-summary', o.summary);
+    message(acc, emit, key, 'task-error', patch.error);
     return true;
   }
   const parent = typeof o.parent_tool_use_id === 'string' && o.parent_tool_use_id;
   const blocks = Array.isArray(o.message?.content) ? o.message.content : [];
   for (const block of blocks) {
     if (block.type === 'tool_use' && ['Agent', 'Task'].includes(block.name)) {
+      if (store.agents.has(block.id)) continue;
       const input = block.input || {};
-      record(acc, emit, block.id, { cliType: 'claude', agentId: block.id, parentAgentId: store.agents.get(parent)?.agentId || parent || '',
+      record(acc, emit, block.id, { cliType, agentId: block.id, parentAgentId: store.agents.get(parent)?.agentId || parent || '',
         name: input.name || input.description || input.subagent_type || I18n.t('子代理'), task: input.prompt || input.description || '',
-        model: input.model || '', status: 'running' });
+        model: input.model || '', background: input.run_in_background === true, status: 'running' });
     } else if (block.type === 'tool_result' && store.agents.has(block.tool_use_id)) {
       const text = typeof block.content === 'string' ? block.content : Array.isArray(block.content)
         ? block.content.filter(part => part?.type === 'text').map(part => part.text).join('\n') : '';
       const previous = store.agents.get(block.tool_use_id);
-      record(acc, emit, block.tool_use_id, { status: block.is_error ? 'error' : terminal.has(previous.status) ? previous.status : 'done',
-        output: previous.output || text });
+      message(acc, emit, block.tool_use_id, 'result', text);
+      record(acc, emit, block.tool_use_id, { status: block.is_error ? 'error' : terminal.has(previous.status) || previous.background ? previous.status : 'done' });
     }
   }
   if (!parent) return false;
-  if (!store.agents.has(parent)) record(acc, emit, parent, { cliType: 'claude', agentId: parent, name: I18n.t('子代理'), status: 'running' });
+  if (!store.agents.has(parent)) record(acc, emit, parent, { cliType, agentId: parent, name: I18n.t('子代理'), status: 'running' });
   if (o.type === 'stream_event') {
     const e = o.event || {};
     if (e.type === 'message_start') record(acc, emit, parent, { currentMessage: e.message?.id, model: e.message?.model || '' });
@@ -95,6 +98,62 @@ function claudeSubagent(o, acc, emit) {
     if (o.message?.model) record(acc, emit, parent, { model: o.message.model });
     message(acc, emit, parent, o.message?.id, blocks.filter(block => block.type === 'text').map(block => block.text).join('\n'));
   }
+  return true;
+}
+
+// Qwen's native tool is exactly "agent". Its correlated progress envelopes
+// expose tool progress/results, not necessarily every token or child model.
+function qwenSubagent(o, acc, emit) {
+  const store = state(acc), parent = typeof o.parent_tool_use_id === 'string' && o.parent_tool_use_id;
+  const blocks = Array.isArray(o.message?.content) ? o.message.content : [];
+  if (parent && !store.agents.has(parent)) return true;
+  for (const [index, block] of blocks.entries()) {
+    if (o.type === 'assistant' && block.type === 'tool_use' && block.name === 'agent') {
+      if (store.agents.has(block.id)) continue;
+      const input = block.input || {};
+      record(acc, emit, block.id, { cliType: 'qwen', agentId: block.id, parentAgentId: parent || '',
+        name: input.description || I18n.t('子代理'), task: input.prompt || '', status: 'running',
+        background: input.run_in_background !== false });
+    } else if (o.type === 'user' && block.type === 'tool_result' && store.agents.has(block.tool_use_id)) {
+      const child = store.agents.get(block.tool_use_id);
+      const text = typeof block.content === 'string' ? block.content : Array.isArray(block.content)
+        ? block.content.filter(part => part?.type === 'text').map(part => part.text).join('\n') : '';
+      message(acc, emit, block.tool_use_id, 'result', text);
+      record(acc, emit, block.tool_use_id, { status: block.is_error ? 'error' : child.background ? child.status : 'done' });
+    } else if (parent && block.type === 'text' && o.type === 'assistant') {
+      message(acc, emit, parent, `${o.message?.id || o.uuid || 'text'}:${index}`, block.text);
+    } else if (parent && block.type === 'tool_use') {
+      message(acc, emit, parent, block.id, typeof block.name === 'string' ? block.name : '');
+    } else if (parent && block.type === 'tool_result') {
+      const text = typeof block.content === 'string' ? block.content : Array.isArray(block.content)
+        ? block.content.filter(part => part?.type === 'text').map(part => part.text).join('\n') : '';
+      message(acc, emit, parent, `${block.tool_use_id}:result`, text);
+    }
+  }
+  return !!parent;
+}
+
+// Kimi ACP exposes the Agent tool and its returned summary, while its native
+// SubagentEvent stream is not forwarded. Do not label this as inner streaming.
+function kimiToolSubagent(update, acc, emit) {
+  if (!['tool_call', 'tool_call_update'].includes(update.sessionUpdate) || typeof update.toolCallId !== 'string') return false;
+  const previous = state(acc).agents.get(update.toolCallId);
+  if (!previous && (update.sessionUpdate !== 'tool_call' || !(update.title === 'Agent' || typeof update.title === 'string' && update.title.startsWith('Agent: ')))) return false;
+  const text = (Array.isArray(update.content) ? update.content : []).filter(block => block?.type === 'content' && block.content?.type === 'text')
+    .map(block => block.content.text).filter(value => typeof value === 'string').join('\n');
+  let input = null;
+  const returned = ['completed', 'failed'].includes(update.status);
+  if (!returned) { try { const value = JSON.parse(text); if (value && typeof value === 'object' && !Array.isArray(value)) input = value; } catch { /* Arguments may still be streaming. */ } }
+  // Unknown/incomplete arguments cannot prove that this was foreground work.
+  const background = input ? input.run_in_background === true : previous?.background ?? true;
+  const header = returned ? text.split('\n\n[summary]')[0] : '';
+  const childId = /^agent_id: ([A-Za-z0-9_.:-]{1,160})$/m.exec(header)?.[1];
+  const completedSummary = returned && /^status: completed$/m.test(header) && text.includes('\n\n[summary]');
+  record(acc, emit, update.toolCallId, { cliType: 'kimi', agentId: childId || previous?.agentId || update.toolCallId,
+    name: input?.description || previous?.name || I18n.t('子代理'), task: input?.prompt || previous?.task || '',
+    background, outputKind: 'summary', status: update.status === 'failed' ? 'error'
+      : update.status === 'completed' && (!background || completedSummary) ? 'done' : previous?.status || 'running',
+    ...(returned && text ? { output: text } : {}) });
   return true;
 }
 
@@ -130,4 +189,4 @@ function codexChildEvent(method, params, acc, emit) {
   return true;
 }
 
-module.exports = { claudeSubagent, codexSubagents, codexChildEvent };
+module.exports = { claudeSubagent, qwenSubagent, kimiToolSubagent, codexSubagents, codexChildEvent };

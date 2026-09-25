@@ -3,6 +3,7 @@ const I18n = require('../../shared/i18n');
 
 const zcode = require('./zcode');
 const { emitActivity } = require('./activities');
+const { qwenSubagent } = require('./subagents');
 
 function geminiArgs(bot) {
   const args = ['--output-format', 'stream-json', '--approval-mode', bot.permissionMode === 'full' ? 'yolo' : bot.permissionMode === 'workspace' ? 'auto_edit' : 'plan'];
@@ -69,7 +70,7 @@ function parseGemini(line, emit, acc) {
 }
 function parseQwen(line, emit, acc) {
   let item; try { item = JSON.parse(line); } catch { return; }
-  if (item.parent_tool_use_id) return;
+  if (qwenSubagent(item, acc, emit)) return;
   const blocks = Array.isArray(item.message?.content) ? item.message.content : [];
   if (item.type === 'assistant') {
     const content = blocks.filter(block => block.type === 'text' && typeof block.text === 'string').map(block => block.text).join('');
@@ -77,11 +78,13 @@ function parseQwen(line, emit, acc) {
     for (const block of blocks) {
       if (block.type === 'tool_use') {
         moveProcess(acc, emit, 'qwen-process');
+        if (block.name === 'agent') continue;
         emitActivity(acc, emit, { id: block.id, kind: 'tool', name: block.name, status: 'running', detail: '' });
       } else if (block.type === 'thinking') emitActivity(acc, emit, { id: `qwen-thought-${item.uuid || acc.processIndex || 0}`, kind: 'reasoning', name: I18n.t('思考'), status: 'done', detail: block.thinking || '' });
     }
   } else if (item.type === 'user') {
     for (const block of blocks.filter(value => value.type === 'tool_result')) {
+      if (acc.subagents?.agents.has(block.tool_use_id)) continue;
       const previous = acc.activities?.find(value => value.id === block.tool_use_id) || {};
       const detail = typeof block.content === 'string' ? block.content : Array.isArray(block.content) ? block.content.filter(part => part.type === 'text').map(part => part.text).join('\n') : '';
       emitActivity(acc, emit, { ...previous, id: block.tool_use_id, kind: 'tool', name: previous.name || I18n.t('工具'), status: block.is_error ? 'error' : 'done', detail });

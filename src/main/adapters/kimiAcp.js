@@ -8,6 +8,7 @@ const { StringDecoder } = require('node:string_decoder');
 const { resolveExecutable } = require('./resolveExecutable');
 const { locateCliExecutable } = require('../cliDiscovery');
 const { safeText, emitActivity } = require('./activities');
+const { kimiToolSubagent } = require('./subagents');
 const { validateAnswers } = require('./inputAnswers');
 const { createDiagnostics } = require('./diagnostics');
 
@@ -132,6 +133,7 @@ function runKimiAcp({ bot, prompt, workspace, cliSettings = {}, noBytesTimeoutMs
         if (acc.activities?.some(item => item.id === id)) { text = ''; emit('text_replace', ''); }
       }
       const prior = acc.activities?.find(item => item.id === update.toolCallId) || {};
+      if (kimiToolSubagent(update, acc, emit)) return;
       const blocks = Array.isArray(update.content) ? update.content : [];
       const detail = blocks.filter(item => item.type === 'content' && item.content?.type === 'text').map(item => item.content.text).join('\n');
       emitActivity(acc, emit, { ...prior, id: update.toolCallId, kind: update.kind === 'execute' ? 'command' : prior.kind || 'tool',

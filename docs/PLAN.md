@@ -2,6 +2,19 @@
 
 Chorus prioritizes durable local conversations, predictable configuration and observable native Agent execution.
 
+## 0.6.3
+
+- A versioned custom JSONL subagent contract and verified Qwen/CodeBuddy event mappings; Kimi ACP exposes returned summaries.
+- Child output remains separate from room routing, terminal replay stays terminal, and native final errors remain visible after progress.
+- Unknown child completion is explicit when the parent exits. Native protocols without child observations retain a visible support boundary.
+- Repeated failed-turn continuation retains scoped partial progress and errors, including public commentary.
+- Remaining: Kimi inner events need a Wire transport with interaction parity; CodeBuddy background lifetime and other providers need native protocol acceptance. A generic contract does not automatically observe arbitrary future CLIs.
+
+## 0.6.2
+
+- External registered skill references retain explicit invocation paths across supported Agents.
+- Codex and Claude native child observations are available in the side workbench.
+
 ## 0.6.1
 
 - Real local Codex, Claude and Kimi question/answer/model continuation; sixty-second deferred questions.

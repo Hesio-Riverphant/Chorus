@@ -2,6 +2,14 @@
 // Application-owned UI text. User content and native agent output never enter this catalog.
 (function(root,factory){if(typeof module==='object'&&module.exports)module.exports=factory();else root.I18nCatalog=factory();})(typeof globalThis!=='undefined'?globalThis:this,()=>({
   "请选择提供的选项": "Choose one of the provided options",
+  "程序需输出 Chorus JSONL 事件：text、error，以及带版本和顺序号的 subagent 快照。子代理可进入侧边工作台；具体格式见 docs/CLI.md。原生 JSON 输出需先适配。": "The program must emit Chorus JSONL events: text, error, and versioned, sequenced subagent snapshots. Children open in the side workbench; see docs/CLI.md for the contract. Native JSON formats require an adapter.",
+  "最终状态未知": "Final status unknown",
+  "子代理：显示原生返回的事件与输出。": "Subagents: displays events and output returned by the native CLI.",
+  "子代理：仅显示原生工具返回摘要。": "Subagents: native tool result summaries only.",
+  "子代理：程序需提供 Chorus JSONL 子代理事件。": "Subagents: the program must supply Chorus JSONL child events.",
+  "子代理：当前接入未提供可识别事件。": "Subagents: this connection does not currently provide recognized child events.",
+  "输出（原生返回摘要）": "Output (native returned summary)",
+  "父调用已结束，未收到子代理最终状态；已保留收到的输出。": "The parent invocation ended without a final child status. Received output is preserved.",
   "自动接力轮次已用完": "Automatic relay limit reached",
   "本轮调用次数已用完": "Round call limit reached",
   "已达 Token 软上限": "Token allowance reached",

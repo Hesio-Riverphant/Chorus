@@ -99,7 +99,7 @@ function parseClaude(line, emit, acc) {
   let o;
   try { o = JSON.parse(line); } catch (_) { return; }
 
-  if (claudeSubagent(o, acc, emit)) return;
+  if (claudeSubagent(o, acc, emit, acc.cliType === 'codebuddy' ? 'codebuddy' : 'claude')) return;
   claudeText(o, acc, emit);
 
   if (o.type === 'system' && o.session_id) emit('session', o.session_id);

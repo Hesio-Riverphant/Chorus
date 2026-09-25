@@ -5,6 +5,15 @@ const { normalizeProfiles, listProfiles, requireAppOnly } = require('../src/main
 const { listModels } = require('../src/main/modelCatalog');
 const custom = { id: 'custom_' + 'a'.repeat(32), label: 'My Agent', command: 'C:\\Tools\\agent.exe', args: ['--model', '{model}'], promptMode: 'stdin', outputMode: 'text' };
 
+test('every Agent exposes an honest subagent transport capability including future custom profiles', () => {
+  const profiles = listProfiles({ cliProfiles: [custom] });
+  for (const profile of profiles) assert.ok(['events', 'summary', 'protocol', 'unavailable'].includes(profile.subagentSupport));
+  assert.equal(profiles.find(profile => profile.id === 'kimi').subagentSupport, 'summary');
+  assert.equal(profiles.find(profile => profile.id === 'qwen').subagentSupport, 'events');
+  assert.equal(profiles.at(-1).subagentSupport, 'unavailable');
+  assert.equal(listProfiles({ cliProfiles: [{ ...custom, outputMode: 'jsonl' }] }).at(-1).subagentSupport, 'protocol');
+});
+
 test('custom CLI settings preserve literal argv, stable IDs and models without granting history capability', () => {
   const settings = { cliProfiles: normalizeProfiles([{ ...custom, historyArgs: ['--no-history'] }]) };
   assert.deepEqual(settings.cliProfiles[0].args, custom.args);

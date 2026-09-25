@@ -50,6 +50,56 @@ test('Claude ordinary stream usage merges partial snapshots and separates latest
   assert.equal(p.last('context_usage').contextWindow, 200000);
 });
 
+test('failed recovery includes public progress once without reasoning or tool payloads', () => {
+  const progress = 'Migration already applied';
+  for (const status of ['error', 'aborted']) {
+    const failed = { id: 'failed', roundId: 'task', authorType: 'bot', authorId: bot.id, status,
+      text: progress, error: 'Connection ended', activities: [
+        { phase: 'commentary', detail: progress, order: 1 },
+        { kind: 'reasoning', detail: 'PRIVATE_REASONING' },
+        { kind: 'tool', detail: 'RAW_TOOL_PAYLOAD' },
+        { phase: 'commentary', detail: 'Database checked', order: 2 },
+      ] };
+    const selection = selectTranscript([human('task', 'Run migration'), failed, human('resume', '@One continue')], bot, [bot],
+      { roundId: 'resume', catchupMessages: 0 });
+    const prompt = buildPrompt(bot, selection.messages, [bot], room);
+    assert.equal(prompt.split(progress).length - 1, 1);
+    assert.match(prompt, /Database checked/);
+    assert.doesNotMatch(prompt, /PRIVATE_REASONING|RAW_TOOL_PAYLOAD/);
+    failed.text = ''; delete failed.error;
+    assert.ok(selectTranscript([human('task', 'Run migration'), failed, human('resume', '@One continue')], bot, [bot],
+      { roundId: 'resume', catchupMessages: 0 }).messages.some(message => message.id === 'failed'));
+  }
+});
+
+test('failed attempt recovery respects durable recipients after rename and skips successful superseded output', () => {
+  const renamed = { ...bot, name: 'Renamed' }, other = { id: 'other', name: 'Other' };
+  const messages = [human('task', '@One private task', { audienceBotIds: [bot.id] }),
+    { id: 'successful', roundId: 'task', authorType: 'bot', authorId: bot.id, status: 'done', text: 'STALE_SUCCESS', supersededBy: 'old', audienceBotIds: [bot.id] },
+    { id: 'old', roundId: 'task', authorType: 'bot', authorId: bot.id, status: 'aborted', text: 'OLD_PARTIAL', error: 'OLD_ERROR', supersedes: 'successful', supersededBy: 'latest', audienceBotIds: [bot.id] },
+    { id: 'latest', roundId: 'task', authorType: 'bot', authorId: bot.id, status: 'error', text: 'NEW_PARTIAL', error: 'NEW_ERROR', supersedes: 'old', audienceBotIds: [bot.id] },
+    human('resume', '@Renamed continue', { audienceBotIds: [bot.id] })];
+  const own = selectTranscript(messages, renamed, [renamed, other], { roundId: 'resume', catchupMessages: 0 });
+  assert.deepEqual(own.messages.map(message => message.id), ['task', 'old', 'latest', 'resume']);
+  assert.equal(selectTranscript(messages, other, [renamed, other], { roundId: 'resume' }).messages.length, 0);
+  messages[1].status = 'error'; messages[1].audienceBotIds = [other.id];
+  assert.ok(!selectTranscript(messages, renamed, [renamed, other], { roundId: 'resume' }).messages.some(message => message.id === 'successful'));
+  messages[3].status = 'done';
+  const completed = selectTranscript(messages, renamed, [renamed, other], { roundId: 'resume' });
+  assert.ok(!completed.messages.some(message => message.id === 'old'));
+});
+
+test('successful normal history retains its prompt and token cost without public progress replay', () => {
+  const reply = { id: 'reply', roundId: 'task', authorType: 'bot', authorId: bot.id, status: 'done', text: 'Final result' };
+  const messages = [human('task', 'Work'), reply, human('next', 'Next task')];
+  const baseline = selectTranscript(messages, bot, [bot], { roundId: 'next' });
+  const prompt = buildPrompt(bot, baseline.messages, [bot], room);
+  reply.activities = [{ phase: 'commentary', detail: 'Earlier public progress' }];
+  const actual = selectTranscript(messages, bot, [bot], { roundId: 'next' });
+  assert.equal(actual.historyTokenEstimate, baseline.historyTokenEstimate);
+  assert.equal(buildPrompt(bot, actual.messages, [bot], room), prompt);
+});
+
 test('Claude does not guess window from a different model or result-only cumulative usage', () => {
   const p = parser('claude');
   p.send({ type: 'result', usage: { input_tokens: 50000, output_tokens: 3000 }, modelUsage: { test: { contextWindow: 200000 } } });

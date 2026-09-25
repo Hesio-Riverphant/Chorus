@@ -358,14 +358,15 @@ window.WorkbenchUI = (() => {
     const { activity, botName } = tab.payload, info = activity.subagent || {};
     I18n.write(tab, () => activity.name || I18n.t('子代理'), 'title'); tab.element.replaceChildren();
     const heading = node('header', 'wb-agent-heading'); heading.append(symbol('agent'), node('h3', '', tab.title));
-    const status = { running: I18n.t('运行中'), done: I18n.t('已完成'), error: I18n.t('执行失败'), aborted: I18n.t('已停止') }[activity.status] || activity.status || '';
+    const status = { running: I18n.t('运行中'), done: I18n.t('已完成'), error: I18n.t('执行失败'), aborted: I18n.t('已停止'), unknown: I18n.t('最终状态未知') }[activity.status] || activity.status || '';
     heading.append(node('span', 'wb-agent-status', status));
+    if (activity.status === 'unknown') tab.element.append(node('p', 'hint', I18n.live(() => I18n.t('父调用已结束，未收到子代理最终状态；已保留收到的输出。'))));
     const details = node('dl', 'wb-agent-meta');
     for (const [label, value] of [[I18n.t('派发成员'), botName], ['Agent', info.cliType], [I18n.t('模型'), info.model], [I18n.t('推理程度'), info.reasoningEffort], [I18n.t('子代理'), info.agentId], [I18n.t('父代理'), info.parentAgentId]]) {
       if (value) details.append(node('dt', '', label), node('dd', '', value));
     }
     tab.element.append(heading, details, node('h4', '', I18n.live(() => I18n.t('任务'))), node('pre', 'wb-agent-text', I18n.live(() => info.task || activity.summary || I18n.t('原生 Agent 尚未返回任务正文'))),
-      node('h4', '', I18n.live(() => I18n.t('输出'))), node('pre', 'wb-agent-text', I18n.live(() => info.output || activity.detail || I18n.t('等待原生 Agent 返回输出…'))));
+      node('h4', '', I18n.live(() => info.outputKind === 'summary' ? I18n.t('输出（原生返回摘要）') : I18n.t('输出'))), node('pre', 'wb-agent-text', I18n.live(() => info.output || activity.detail || I18n.t('等待原生 Agent 返回输出…'))));
     if (info.outputTruncated) tab.element.append(node('p', 'hint', I18n.live(() => I18n.t('输出较长，当前显示原生事件已提供的部分内容。'))));
   }
   function refreshAgentDetails() {

@@ -33,7 +33,7 @@ test('discovery reads configured executable metadata only and does not grant cus
   const id = 'custom_' + 'a'.repeat(32);
   const settings = { enabledCliIds: [id], cliProfiles: [{ id, label: 'Fixture', command: 'C:\\Agent\\agent.exe', args: [], promptMode: 'stdin', outputMode: 'text' }] };
   const result = await discoverClis(settings, { env: {}, homeDir: '', platform: 'win32', stat: async filename => ({ isFile: () => filename === settings.cliProfiles[0].command }) });
-  assert.deepEqual(result.at(-1), { ...settings.cliProfiles[0], historyArgs: [], builtin: false, historyModeSupport: 'unknown', enabled: true, installed: true, executablePath: settings.cliProfiles[0].command });
+  assert.deepEqual(result.at(-1), { ...settings.cliProfiles[0], historyArgs: [], builtin: false, historyModeSupport: 'unknown', subagentSupport: 'unavailable', enabled: true, installed: true, executablePath: settings.cliProfiles[0].command });
 });
 
 test('launcher and settings discovery use the same common-directory executable search', () => {

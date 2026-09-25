@@ -97,6 +97,14 @@ window.CliSettingsUI = (() => {
       const status = document.createElement('span'); status.className = 'hint';
       I18n.write(status, () => profile.installed === true ? I18n.t('已在本机找到') : profile.installed === false ? I18n.t('未在常用目录找到') : I18n.t('等待扫描'));
       detail.append(title, status);
+      const children = document.createElement('span'); children.className = 'hint';
+      I18n.write(children, () => {
+        const support = profile.builtin ? profile.subagentSupport : profile.outputMode === 'jsonl' ? 'protocol' : 'unavailable';
+        return support === 'events' ? I18n.t('子代理：显示原生返回的事件与输出。')
+          : support === 'summary' ? I18n.t('子代理：仅显示原生工具返回摘要。')
+          : support === 'protocol' ? I18n.t('子代理：程序需提供 Chorus JSONL 子代理事件。')
+          : I18n.t('子代理：当前接入未提供可识别事件。');
+      }); detail.append(children);
       if (profile.historyModeSupport !== 'verified') {
         const history = document.createElement('span'); history.className = 'hint';
         I18n.write(history, () => I18n.t('会话记录按此 Agent 的原生设置保存。')); detail.append(history);

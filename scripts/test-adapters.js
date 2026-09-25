@@ -66,6 +66,24 @@ function fixture(overrides = {}, spawnCalls = []) {
   return { child, handle, events };
 }
 
+test('custom JSONL subagents stay out of parent replies and retain provider identity', async () => {
+  const cliType = 'custom_' + 'a'.repeat(32);
+  const profile = { id: cliType, label: 'Fixture agent', command: process.execPath, args: [], promptMode: 'stdin', outputMode: 'jsonl' };
+  const f = fixture({ bot: { cliType, permissionMode: 'full' }, cliSettings: { cliProfiles: [profile] } });
+  const send = event => f.child.stdout.write(JSON.stringify(event) + '\n');
+  send({ type: 'subagent', version: 1, id: 'child', sequence: 0, status: 'running', name: 'Research', task: 'Inspect fixture', output: 'First' });
+  send({ type: 'subagent', version: 1, id: 'child', sequence: 1, status: 'done', output: 'First\n@Other child result' });
+  send({ type: 'subagent', version: 1, id: 'child', sequence: 0, status: 'running', output: 'stale' });
+  send({ type: 'text', text: 'Parent answer' });
+  f.child.emit('close', 0);
+  const result = await f.handle.promise;
+  assert.equal(result.error, null); assert.equal(result.text, 'Parent answer');
+  const activity = f.events.filter(event => event.type === 'activity').at(-1)?.payload;
+  assert.equal(activity?.kind, 'subagent'); assert.equal(activity.status, 'done');
+  assert.equal(activity.subagent.cliType, cliType); assert.equal(activity.subagent.task, 'Inspect fixture');
+  assert.equal(activity.subagent.output, 'First\n@Other child result');
+});
+
 test('oversized stderr never exposes a credential suffix after losing its label', async () => {
   const logs = [], f = fixture({ log: value => logs.push(value) });
   const marker = 'synthetic-private-value';
