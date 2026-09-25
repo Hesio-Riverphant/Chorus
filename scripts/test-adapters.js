@@ -466,6 +466,48 @@ test('Claude moves only tool-boundary public text into ordered progress and reta
   assert.deepEqual(edit.files, ['src/demo.js']); assert.equal(edit.status, 'done');
 });
 
+test('Claude single-block envelopes retain native stream indexes after thinking without duplicating text', () => {
+  const acc = {}, events = []; let body = '';
+  const emit = (type, payload) => { events.push({ type, payload }); if (type === 'text') body += payload; if (type === 'text_replace') body = payload; };
+  const write = event => PARSERS.claude(JSON.stringify(event), emit, acc);
+  const stream = event => write({ type: 'stream_event', event });
+  for (const [id, text, stop] of [['progress', 'Checking.', 'tool_use'], ['final', 'Answer.', 'end_turn']]) {
+    stream({ type: 'message_start', message: { id } });
+    stream({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } });
+    write({ type: 'assistant', message: { id, content: [{ type: 'thinking', thinking: '' }] } });
+    stream({ type: 'content_block_stop', index: 0 });
+    stream({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } });
+    stream({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text } });
+    write({ type: 'assistant', message: { id, content: [{ type: 'text', text }] } });
+    stream({ type: 'content_block_stop', index: 1 });
+    stream({ type: 'message_delta', delta: { stop_reason: stop } });
+    stream({ type: 'message_stop' });
+  }
+  assert.equal(body, 'Answer.');
+  const progress = events.filter(event => event.type === 'activity' && event.payload.phase === 'commentary');
+  assert.equal(progress.at(-1).payload.detail, 'Checking.');
+  assert.equal(new Set(progress.map(event => event.payload.id)).size, 1);
+});
+
+test('Claude identical text in different stream blocks or messages is preserved', () => {
+  const acc = {}; let body = '';
+  const emit = (type, payload) => { if (type === 'text') body += payload; if (type === 'text_replace') body = payload; };
+  const write = event => PARSERS.claude(JSON.stringify(event), emit, acc);
+  const stream = event => write({ type: 'stream_event', event });
+  for (const id of ['one', 'two']) {
+    stream({ type: 'message_start', message: { id } });
+    for (const index of [0, 1]) {
+      stream({ type: 'content_block_start', index, content_block: { type: 'text', text: '' } });
+      stream({ type: 'content_block_delta', index, delta: { type: 'text_delta', text: 'Repeat.' } });
+      write({ type: 'assistant', message: { id, content: [{ type: 'text', text: 'Repeat.' }] } });
+      stream({ type: 'content_block_stop', index });
+    }
+    stream({ type: 'message_delta', delta: { stop_reason: 'end_turn' } });
+    stream({ type: 'message_stop' });
+  }
+  assert.equal(body, 'Repeat.'.repeat(4));
+});
+
 test('Claude interrupted and unidentified streams remain visible without inferred final or duplicate snapshots', async () => {
   for (const identified of [true, false]) {
     const { child, handle, events } = fixture({ bot: { cliType: 'claude' } });

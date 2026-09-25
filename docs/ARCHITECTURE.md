@@ -61,6 +61,12 @@ Model-provided messages and activity descriptions are escaped or rendered by a s
 
 ## Local desktop tradeoffs and acceptance
 
+### Remote access proposal
+
+Remote access is not implemented. A private-network remote desktop can expose the same running instance without synchronizing application data. Independent clients would require one authoritative host that owns persistence, CLI processes, files and approvals. Clients send authenticated, idempotent commands with expected revisions; the host publishes ordered events and supports snapshot/event recovery after reconnect. Approval resolution must be atomic across clients. Native credentials stay on the host. Start with one host and online-only clients; do not synchronize a live data directory through a file-sync service.
+
+Implementation should preserve local mode while extracting the command/event transport, then add device pairing/revocation and reconnect handling. Acceptance must cover duplicate commands, competing approvals, concurrent edits, host/client crashes and access revocation. This is a design proposal, not an enabled server.
+
 The preload API is a local transport boundary, not a remote API. Web or remote operation would require a separate authenticated transport, filesystem authority and process ownership design. This application deliberately keeps that boundary local. Renderer files still use explicit script order and shared globals; they are not ES modules and have no tree-shaking. Pure shared logic is independently tested, while UI changes receive real Electron smoke checks. Migrate a module when it removes a concrete dependency problem rather than rewriting the UI solely to introduce a bundler.
 
 Electron bundles Chromium and Node; that affects idle memory and download size. Native CLI processes usually add the workload-dependent portion. node-pty remains a native dependency for the real terminal: the lockfile, native-platform build, packaged terminal smoke test and per-platform CI catch incompatible binaries. End users install the tested package, not a separate rebuild toolchain. An Electron upgrade must pass those checks again.

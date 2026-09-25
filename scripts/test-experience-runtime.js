@@ -184,6 +184,29 @@ test('native reference mismatch warns and allows normal reply without claiming t
   assert.match(f.calls[0].prompt, /不可用|不适用|无法使用/);
 });
 
+test('explicit shared skill reaches the selected bot as an external file with source-relative resources', async () => {
+  const source = path.join(os.tmpdir(), 'shared skill', 'SKILL.md');
+  const resolved = [];
+  const f = orchestrationFixture({ registered: [{ alias: 'shared' }], resolveReference(_, request) {
+    resolved.push(request);
+    return { mode: 'reference', name: 'shared', alias: 'shared', category: 'other', nativeCliType: null,
+      skillFile: source, body: 'SKILL_BODY_MUST_NOT_BE_COPIED' };
+  } });
+  f.messages[0].text = '@Bot1 /shared complete this task';
+  await f.orchestrator.continueHuman('r1', 'human1');
+  assert.equal(f.calls.length, 1);
+  assert.equal(resolved[0].alias, 'shared');
+  assert.equal(resolved[0].cliType, 'codex');
+  const prompt = f.calls[0].prompt;
+  assert.ok(prompt.includes(source));
+  assert.match(prompt, /先用文件读取工具/);
+  assert.match(prompt, /无需先安装或出现在原生技能列表/);
+  assert.match(prompt, /相对资源路径以此来源文件所在目录为基准/);
+  assert.match(prompt, /若原生权限要求审批，提交审批请求/);
+  assert.ok(!prompt.includes('SKILL_BODY_MUST_NOT_BE_COPIED'));
+  assert.ok(!prompt.includes('请使用你的 CLI 已发现的同名技能'));
+});
+
 test('retry revalidates the original human native skill and never scans historical slash commands', async () => {
   const resolved = [];
   const f = orchestrationFixture({ registered: [{ alias: 'native' }, { alias: 'historical' }],

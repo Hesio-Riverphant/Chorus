@@ -9,7 +9,13 @@ const MAX_TEXT = 4 * 1024 * 1024;
 // Everything else remains visible answer text, including interrupted streams.
 function claudeText(event, acc, emit) {
   const stream = event.type === 'stream_event' ? event.event : null;
-  if (stream?.type === 'message_start') acc.claudeTextId = stream.message?.id;
+  if (stream?.type === 'message_start') {
+    acc.claudeTextId = stream.message?.id;
+    acc.claudeStreamBlock = null;
+  }
+  if (stream?.type === 'content_block_start') acc.claudeStreamBlock = {
+    messageId: acc.claudeTextId, index: stream.index, type: stream.content_block?.type,
+  };
   const id = event.type === 'assistant' ? event.message?.id : acc.claudeTextId;
   if (!id) { // Legacy/partial protocols without identities cannot be reclassified safely.
     if (stream?.delta?.type === 'text_delta') { acc.claudeUntrackedText = true; emit('text', stream.delta.text || ''); }
@@ -39,7 +45,12 @@ function claudeText(event, acc, emit) {
   if (event.type === 'assistant' && !acc.claudeUntrackedText && Array.isArray(event.message?.content)) {
     event.message.content.forEach((block, index) => {
       if (block.type !== 'text' || typeof block.text !== 'string') return;
-      const item = get(index);
+      // Stream-json emits a one-block assistant envelope before block_stop.
+      // Its array index is zero even when thinking occupies native index zero.
+      const streamed = acc.claudeStreamBlock;
+      const blockIndex = event.message.content.length === 1 && streamed?.messageId === id && streamed.type === 'text'
+        ? streamed.index : index;
+      const item = get(blockIndex);
       if (block.text.startsWith(item.text)) append(item, block.text.slice(item.text.length));
       else if (block.text !== item.text) emit('error', I18n.t('Claude 完整文本与流式文本不一致，已保留流式结果'));
     });

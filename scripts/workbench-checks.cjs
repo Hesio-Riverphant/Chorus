@@ -167,12 +167,29 @@ app.whenReady().then(async () => {
   await invoke('closeTab', activityFileId);
   await evaluate(() => document.querySelector('[data-msg-id="edited-file-link-fixture"]').remove());
 
-  await evaluate(() => WorkbenchUI.openAgentDetail({ roomId: state.currentRoomId, messageId: 'synthetic_message', botName: 'Fixture parent', activity: {
-    id: 'codex:subagent:fixture', kind: 'subagent', name: 'Fixture review', status: 'done', subagent: { agentId: 'fixture', parentAgentId: 'fixture-parent', task: 'Inspect synthetic file', output: 'Synthetic review complete', model: 'fixture-model' },
-  } }));
-  check('subagent detail shows parent, task and returned output', await evaluate(() => {
-    const text = document.querySelector('.wb-agent').textContent; return document.getElementById('workbenchDock').dataset.kind === 'agent' && text.includes('Fixture parent') && text.includes('Inspect synthetic file') && text.includes('Synthetic review complete');
+  await evaluate(() => {
+    const message = { id: 'subagent-link-fixture', roomId: state.currentRoomId, authorType: 'bot', status: 'streaming', createdAt: Date.now(), text: '', activities: [{
+      id: 'codex:subagent:fixture', kind: 'subagent', name: 'Fixture review', status: 'running', subagent: { agentId: 'fixture', parentAgentId: 'fixture-parent', task: 'Inspect synthetic file', output: 'Synthetic review started', model: 'fixture-model' },
+    }] };
+    messages(state.currentRoomId).push(message);
+    const row = bubbleEl(message); document.getElementById('messages').append(row);
+    row.querySelector('details').open = true; row.querySelector('.subagent-card').click();
+  });
+  check('subagent activity button opens its task and output in the side workbench', await evaluate(() => {
+    const text = document.querySelector('.wb-agent').textContent; return document.getElementById('workbenchDock').dataset.kind === 'agent' && text.includes('fixture-parent') && text.includes('Inspect synthetic file') && text.includes('Synthetic review started');
   }));
+  await evaluate(() => {
+    const activity = messages(state.currentRoomId).find(message => message.id === 'subagent-link-fixture').activities[0];
+    activity.status = 'done'; activity.subagent.output = 'Synthetic review complete';
+    WorkbenchUI.refreshAgentDetails();
+  });
+  check('open subagent workbench updates when the recorded native output changes', await evaluate(() => {
+    const text = document.querySelector('.wb-agent').textContent; return text.includes('Synthetic review complete') && !text.includes('Synthetic review started');
+  }));
+  await evaluate(() => {
+    const list = messages(state.currentRoomId); list.splice(list.findIndex(message => message.id === 'subagent-link-fixture'), 1);
+    document.querySelector('[data-msg-id="subagent-link-fixture"]').remove();
+  });
   await invoke('closeTab', fileId);
   const staleFileId = await invoke('openFiles', false);
   await evaluate(() => [...document.querySelectorAll('.wb-file-entry')].find(item => item.textContent === 'fixture.txt').click());

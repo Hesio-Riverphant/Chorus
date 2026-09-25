@@ -112,8 +112,10 @@ function buildPrompt(bot, slice, bots, room, skillBlocks) {
       continue;
     }
     if (sk.mode === 'reference' && sk.category === 'other' && !sk.nativeCliType) {
-      parts.push(`【本次引用共享技能：${sk.name}】房主指定来源文件：${sk.skillFile}。请按当前权限读取并遵循此文件。` +
-        '这是外部文件引用，未声称在你的原生框架中安装。若来源不可读或依赖的工具、接口不受当前宿主支持，请先说明限制，不得假称完成。');
+      parts.push(`【本次引用共享技能：${sk.name}】房主已显式选择此技能，先用文件读取工具按当前权限读取来源文件：${sk.skillFile}，再按原文完成任务。` +
+        '此引用直接按文件路径使用，无需先安装或出现在原生技能列表中；原生技能命令不识别此名称时仍按上述路径读取。' +
+        '文中的相对资源路径以此来源文件所在目录为基准，项目操作仍使用本轮工作目录。' +
+        '若原生权限要求审批，提交审批请求；若来源不可读或依赖不受当前宿主支持，说明实际限制，不得假称完成。');
       continue;
     }
     if (sk.mode === 'reference') {
