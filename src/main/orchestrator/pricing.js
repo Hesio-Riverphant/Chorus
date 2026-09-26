@@ -5,6 +5,11 @@ const { normalizeTariff, selectRates } = require('../../shared/agentPricing');
 // Preserve the invocation-start tariff; provider per-request billing can differ.
 function calculateCost(bot, usage, inputTokens, outputTokens, costMode = 'none', at = Date.now(), agentPricing = {}) {
   const model = bot.model || usage.model;
+  // A provider-reported API cost is authoritative and remains visible regardless
+  // of the optional CLI-cost display setting or local tariff configuration.
+  if (Number.isFinite(usage.apiCost) && usage.apiCost >= 0) {
+    return { cost: usage.apiCost, estimated: false, costSource: 'api' };
+  }
   let tariff;
   try {
     const saved = agentPricing[bot.cliType]?.find(item => item.enabled && item.model === model);
@@ -27,7 +32,6 @@ function calculateCost(bot, usage, inputTokens, outputTokens, costMode = 'none',
     return { ...result, cost: Number.isFinite(cost) && cost >= 0 ? cost : null };
   }
   if (costMode === 'cli') {
-    if (Number.isFinite(usage.apiCost) && usage.apiCost >= 0) return { cost: usage.apiCost, estimated: false, costSource: 'api' };
     if (Number.isFinite(usage.cliCost) && usage.cliCost >= 0) return { cost: usage.cliCost, estimated: true, costSource: 'cli' };
   }
   return { cost: null, estimated: true, costSource: 'none' };

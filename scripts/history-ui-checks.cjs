@@ -100,4 +100,3 @@ module.exports = async function historyChecks({ win, persistence, check }) {
     I18n.setLanguage('zh-CN'); closeAllModals(); return good;
   }));
 };
-

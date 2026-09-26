@@ -2,7 +2,14 @@
 
 Chorus prioritizes durable local conversations, predictable configuration and observable native Agent execution.
 
-## 0.6.3
+## 0.6.4 interaction and delivery follow-up
+
+- Compact paged question cards with numbered choices, custom answers, explicit skip/send and repeat-submit protection.
+- Source-root labels in both skill pickers; stable streaming disclosure controls and themed history search.
+- Claude per-invocation server deny policy prevents disabled MCP startup; missing inventory never triggers a scan during ordinary turns.
+- Source, installed/portable app and public release must pass separate identity checks. Account-specific workflows and sustained operation remain separate acceptance scopes.
+
+## 0.6.3 capability baseline
 
 - A versioned custom JSONL subagent contract and verified Qwen/CodeBuddy event mappings; Kimi ACP exposes returned summaries.
 - Child output remains separate from room routing, terminal replay stays terminal, and native final errors remain visible after progress.

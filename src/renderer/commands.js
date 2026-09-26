@@ -147,6 +147,10 @@ const RoomCommands = (() => {
 })();
 
 // Main and side composers share parsing, matching and alias deduplication.
+function skillSourceRoot(value) {
+  const parts = String(value || '').split(String.fromCharCode(92)).join('/').split('/');
+  return parts.find(part => /^\.[a-z][a-z0-9_-]*$/i.test(part)) || I18n.t('本地');
+}
 const ComposerSlash = {
   detect(text, end = text.length) {
     const match = text.slice(0, end).match(/(?:^|\s)\/(skill(?:[ \t]+[^\r\n/@]*)?|[^\s/]*)$/i);
@@ -166,7 +170,9 @@ const ComposerSlash = {
       const description = skill.description || descriptions.get(sourceKey(skill.sourcePath)) || '';
       const cliTypes = [...new Set([...(previous?.cliTypes || []), ...(skill.cliTypes || [])])];
       const searchText = [previous?.searchText, skill.name, skill.alias, description].filter(Boolean).join(' ');
-      skills.set(key, { ...skill, name, cliTypes, searchText,
+      const sourceRoots = [...new Set([...(previous?.sourceRoots || []), skillSourceRoot(skill.sourcePath)])];
+      const sourcePaths = [...new Set([...(previous?.sourcePaths || []), skill.sourcePath].filter(Boolean))];
+      skills.set(key, { ...skill, name, cliTypes, searchText, sourceRoots, sourcePaths,
         skillDescription: description || previous?.skillDescription || '',
         description: [description || previous?.skillDescription, cliTypes.join(' / ')].filter(Boolean).join(' · ') });
     }
@@ -187,91 +193,150 @@ window.getComposerSlashItems = (roomId, query = '') => ComposerSlash.items(roomI
 window.chooseComposerSlash = (item, scope) => RoomCommands.choose(item, scope);
 
 const NativeInputUI = (() => {
+  const SKIP_ANSWER = '__chorus_skip__';
   const pending = new Map();
+  const attr = (element, name, value) => element.setAttribute?.(name, value);
   function render(roomId) {
     const container = roomId === state.currentRoomId ? document.getElementById('messages')
       : SideChatUI.getRoom()?.id === roomId ? document.getElementById('sideChatMessages') : null;
     if (!container) return;
-    container.querySelectorAll('.native-question').forEach(element => element.remove());
-    if (state.rooms.find(room => room.id === roomId)?.archivedAt) return;
+    if (state.rooms.find(room => room.id === roomId)?.archivedAt) {
+      container.querySelectorAll('.native-question').forEach(form => form.remove()); return;
+    }
     for (const message of messages(roomId)) for (const input of message.deferredInputs || []) {
       const key = message.id + ':' + input.requestId;
       if (input.status === 'deferred' && !message.supersededBy && !pending.has(key)) pending.set(key, { ...input, roomId,
         messageId: message.id, botId: message.authorId, answers: {} });
       else if (input.status !== 'deferred' || message.supersededBy) pending.delete(key);
     }
+    const existing = new Map();
+    for (const form of container.querySelectorAll('.native-question')) {
+      if (!pending.has(form.requestKey)) form.remove(); else existing.set(form.requestKey, form);
+    }
     for (const [key, record] of pending) {
       if (record.roomId !== roomId) continue;
-      const form = document.createElement('form'); form.className = 'native-question';
+      const previousForm = existing.get(key);
+      // Keep focused inputs and their selection alive during unrelated updates.
+      if (previousForm && previousForm.requestStatus === record.status) continue;
+      previousForm?.remove();
+      const form = document.createElement('form'); form.className = 'native-question native-question-dialog';
+      form.requestKey = key; form.requestStatus = record.status; form.noValidate = true;
+      attr(form, 'role', 'dialog'); attr(form, 'aria-modal', 'false');
       const heading = document.createElement('strong');
+      heading.id = 'native-question-title-' + record.messageId + '-' + record.requestId;
+      attr(form, 'aria-labelledby', heading.id);
       const name = (roomMembers(state.rooms.find(room => room.id === record.roomId)).find(bot => bot.id === record.botId) || state.bots.find(bot => bot.id === record.botId))?.name || I18n.t('成员');
-      I18n.write(heading, () => record.type === 'approval' ? I18n.tpl`${name} 请求授权` : I18n.tpl`${name} 需要补充信息`);
-      form.append(heading);
+      I18n.write(heading, () => record.type === 'approval' ? name + ' · ' + I18n.t('请求授权') : I18n.t('问题'));
+      heading.title = name;
+      const header = document.createElement('div'); header.className = 'native-question-header';
+      const icon = document.createElement('span'); icon.className = 'native-question-icon'; icon.textContent = '?'; attr(icon, 'aria-hidden', 'true');
+      header.append(icon, heading); form.append(header);
       if (record.type === 'approval') {
         const detail = document.createElement('pre'); detail.textContent = record.detail || ''; form.append(detail);
         const hint = document.createElement('p'); hint.className = 'hint';
         I18n.write(hint, () => I18n.t('始终允许仅适用于本次原生会话；超时自动拒绝。')); form.append(hint);
-        const error = document.createElement('p'); error.className = 'hint';
+        const error = document.createElement('p'); error.className = 'hint'; attr(error, 'role', 'alert');
         for (const decision of record.decisions || []) {
           const button = document.createElement('button'); button.type = 'button'; button.className = 'ghost-btn';
           I18n.write(button, () => I18n.t(({ accept: '允许一次', acceptForSession: '本次会话始终允许', decline: '拒绝' })[decision] || decision));
           button.onclick = async () => {
+            if (record.submitting) return; record.submitting = true;
             form.querySelectorAll('button').forEach(value => { value.disabled = true; });
             try { await window.api.respondNativeInput({ roomId, messageId: record.messageId, requestId: record.requestId, answers: { decision } }); pending.delete(key); form.remove(); }
-            catch (e) { error.textContent = e.message; form.querySelectorAll('button').forEach(value => { value.disabled = false; }); }
+            catch (e) { error.textContent = e.message; record.submitting = false; form.querySelectorAll('button').forEach(value => { value.disabled = false; }); }
           };
           form.append(button);
         }
         form.append(error); container.append(form); continue;
       }
-      const fields = document.createElement('div'); form.append(fields);
+      const questions = Array.isArray(record.questions) ? record.questions : [];
+      record.page = Math.max(0, Math.min(Number(record.page) || 0, Math.max(0, questions.length - 1)));
+      record.selections ||= {}; record.answers ||= {};
+      const rebuild = () => { form.remove(); render(roomId); };
+      const pager = document.createElement('div'); pager.className = 'native-question-pager';
+      const previous = document.createElement('button'); previous.type = 'button'; previous.className = 'native-question-nav'; previous.textContent = '‹';
+      I18n.attr(previous, 'aria-label', () => I18n.t('上一个')); previous.disabled = record.page === 0;
+      const pageLabel = document.createElement('span'); pageLabel.className = 'native-question-page';
+      pageLabel.textContent = (record.page + 1) + ' of ' + questions.length;
+      const next = document.createElement('button'); next.type = 'button'; next.className = 'native-question-nav'; next.textContent = '›';
+      I18n.attr(next, 'aria-label', () => I18n.t('下一个')); next.disabled = record.page >= questions.length - 1;
+      previous.onclick = () => { record.page -= 1; rebuild(); };
+      next.onclick = () => { record.page += 1; rebuild(); };
+      const close = document.createElement('button'); close.type = 'button'; close.className = 'native-question-close'; close.textContent = '×';
+      I18n.attr(close, 'aria-label', () => I18n.t('暂时收起问题'));
+      close.onclick = () => { record.collapsed = true; rebuild(); };
+      pager.append(previous, pageLabel, next, close); header.append(pager);
       if (record.status === 'deferred') {
         const hint = document.createElement('p'); hint.className = 'hint';
         I18n.write(hint, () => I18n.t('等待已结束。回答后将新建一次续接调用，并核对之前的执行结果。')); form.append(hint);
+      }
+      if (record.collapsed || record.status === 'deferred' && !record.expanded) {
         const reopen = document.createElement('button'); reopen.type = 'button'; reopen.className = 'ghost-btn';
-        I18n.write(reopen, () => I18n.t('回答问题')); fields.hidden = !record.expanded;
-        reopen.onclick = () => { record.expanded = true; fields.hidden = false; reopen.hidden = true; };
-        reopen.hidden = !!record.expanded; form.append(reopen);
+        I18n.write(reopen, () => I18n.t('回答问题'));
+        reopen.onclick = () => { record.collapsed = false; record.expanded = true; rebuild(); };
+        form.append(reopen); container.append(form); continue;
       }
-      for (const question of record.questions || []) {
-        const label = document.createElement('label'); label.className = 'field';
-        const text = document.createElement('span'); text.textContent = question.question;
-        const input = document.createElement('input'); input.required = true; input.name = question.id; input.value = record.answers[question.id] || '';
-        input.readOnly = question.optionOnly === true;
-        record.selections ||= {};
-        input.oninput = () => { record.answers[question.id] = input.value; record.selections[question.id] = []; };
-        label.append(text);
-        for (const option of question.options || []) {
-          const button = document.createElement('button'); button.type = 'button'; button.className = 'ghost-btn';
-          button.textContent = option.label; button.title = option.description || '';
-          button.onclick = () => {
-            if (question.multiSelect) {
-              const selected = record.selections[question.id] || [];
-              record.selections[question.id] = selected.includes(option.label) ? selected.filter(value => value !== option.label) : [...selected, option.label];
-              input.value = record.selections[question.id].join(', ');
-              for (const candidate of label.querySelectorAll('button')) candidate.setAttribute('aria-pressed', String(record.selections[question.id].includes(candidate.textContent)));
-            } else {
-              input.value = option.label;
-              for (const candidate of label.querySelectorAll('button')) candidate.setAttribute('aria-pressed', String(candidate === button));
-            }
-            record.answers[question.id] = input.value;
-          };
-          label.append(button);
+      const question = questions[record.page];
+      if (!question) continue;
+      const fields = document.createElement('div'); fields.className = 'native-question-fields';
+      const title = document.createElement('strong'); title.className = 'native-question-title';
+      title.id = heading.id + '-prompt'; title.textContent = question.question || question.header; fields.append(title);
+      const choices = document.createElement('div'); choices.className = 'native-question-choices'; fields.append(choices);
+      const footer = document.createElement('div'); footer.className = 'native-question-footer';
+      const edit = document.createElement('span'); edit.className = 'native-question-edit'; edit.textContent = '✎'; attr(edit, 'aria-hidden', 'true');
+      const input = document.createElement('input'); input.name = question.id; input.value = record.answers[question.id] || '';
+      input.readOnly = question.optionOnly === true; attr(input, 'aria-labelledby', title.id);
+      I18n.attr(input, 'placeholder', () => question.optionOnly ? I18n.t('请选择提供的选项') : I18n.t('或自行撰写回复'));
+      const syncChoices = () => {
+        for (const button of choices.querySelectorAll('button')) attr(button, 'aria-pressed', String(question.multiSelect
+          ? (record.selections[question.id] || []).includes(button.optionLabel) : record.answers[question.id] === button.optionLabel));
+      };
+      for (const [index, option] of (question.options || []).entries()) {
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'native-question-choice';
+        button.optionLabel = option.label; button.title = option.description || '';
+        const number = document.createElement('span'); number.className = 'native-question-number'; number.textContent = String(index + 1); attr(number, 'aria-hidden', 'true');
+        const label = document.createElement('span'); label.className = 'native-question-label'; label.textContent = option.label;
+        const arrow = document.createElement('span'); arrow.className = 'native-question-arrow'; arrow.textContent = '→'; attr(arrow, 'aria-hidden', 'true');
+        button.append(number, label, arrow);
+        button.onclick = () => {
+          if (question.multiSelect) {
+            const selected = record.selections[question.id] || [];
+            record.selections[question.id] = selected.includes(option.label) ? selected.filter(value => value !== option.label) : [...selected, option.label];
+            input.value = record.selections[question.id].join(', ');
+          } else input.value = option.label;
+          record.answers[question.id] = input.value; syncChoices(); syncSend();
+        };
+        choices.append(button);
+      }
+      const actions = document.createElement('div'); actions.className = 'native-question-actions';
+      const skip = document.createElement('button'); skip.type = 'button'; skip.className = 'ghost-btn native-question-skip'; I18n.write(skip, () => I18n.t('跳过'));
+      const send = document.createElement('button'); send.type = 'submit'; send.className = 'primary-btn native-question-send'; I18n.write(send, () => I18n.t('发送'));
+      const error = document.createElement('p'); error.className = 'hint'; attr(error, 'role', 'alert');
+      const syncSend = () => { send.disabled = !input.value.trim() || !!record.submitting; };
+      input.oninput = () => { record.answers[question.id] = input.value; record.selections[question.id] = []; syncChoices(); syncSend(); };
+      actions.append(skip, send); footer.append(edit, input, actions); form.append(fields, footer, error);
+      syncChoices(); syncSend();
+      const submit = async (skipAll = false) => {
+        if (record.submitting) return;
+        if (!skipAll) {
+          const missing = questions.findIndex(item => !String(record.answers[item.id] || '').trim());
+          if (missing >= 0) { record.page = missing; rebuild(); return; }
         }
-        input.placeholder = question.optionOnly ? I18n.t('请选择提供的选项') : I18n.t('选择选项或填写其他回答');
-        label.append(input); fields.append(label);
-      }
-      const send = document.createElement('button'); send.className = 'primary-btn'; I18n.write(send, () => I18n.t('继续'));
-      const error = document.createElement('p'); error.className = 'hint'; fields.append(send, error);
-      form.onsubmit = async event => {
-        event.preventDefault(); send.disabled = true;
+        record.submitting = true;
+        form.querySelectorAll('button').forEach(button => { button.disabled = true; }); input.disabled = true;
         try {
-          const answers = Object.fromEntries(record.questions.map(question => [question.id, { answers:
-            question.multiSelect && record.selections?.[question.id]?.length ? record.selections[question.id] : [record.answers[question.id] || ''] }]));
+          const answers = Object.fromEntries(questions.map(item => [item.id, { answers: skipAll ? [SKIP_ANSWER] :
+            (item.multiSelect && record.selections[item.id]?.length ? record.selections[item.id] : [record.answers[item.id]]) }]));
           await window.api.respondNativeInput({ roomId, messageId: record.messageId, requestId: record.requestId, answers });
           pending.delete(key); form.remove();
-        } catch (e) { error.textContent = e.message; send.disabled = false; }
+        } catch (e) {
+          error.textContent = e.message; record.submitting = false; input.disabled = false;
+          form.querySelectorAll('button').forEach(button => { button.disabled = false; });
+          previous.disabled = record.page === 0; next.disabled = record.page >= questions.length - 1; syncSend();
+        }
       };
+      skip.onclick = () => submit(true);
+      form.onsubmit = async event => { event.preventDefault(); await submit(false); };
       container.append(form);
     }
   }
@@ -279,7 +344,9 @@ const NativeInputUI = (() => {
     if (!['input_request', 'input_resolved', 'run_update'].includes(record.kind)) return;
     if (record.kind === 'input_request') {
       const key = record.messageId + ':' + record.requestId;
-      pending.set(key, { ...pending.get(key), ...record, answers: pending.get(key)?.answers || {} });
+      const current = pending.get(key);
+      if (current) Object.assign(current, record);
+      else pending.set(key, { ...record, answers: {} });
     }
     if (record.kind === 'input_resolved') pending.delete(record.messageId + ':' + record.requestId);
     if (record.kind === 'run_update' && !['running', 'stopping'].includes(record.run.status)) {

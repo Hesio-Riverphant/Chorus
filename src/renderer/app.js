@@ -287,7 +287,7 @@ function refreshBubbleState(roomId, id) {
   if (!msg) return;
   if (roomId === state.currentRoomId) {
     const old = document.querySelector(`[data-msg-id="${id}"]`);
-    if (old) {
+    if (old && !patchStreamingMessage(old, msg)) {
       const replacement = bubbleEl(msg);
       const oldActivities = old.querySelector('.activities');
       const newActivities = replacement.querySelector('.activities');
@@ -480,6 +480,12 @@ function renderSlash() {
       `<span class="m-role">${esc((item.description || '').slice(0, 24))}</span>`;
     b.addEventListener('mousedown', (event) => event.preventDefault());
     b.addEventListener('click', () => chooseSlash(item));
+    if (!item.command) {
+      const source = document.createElement('small'); source.className = 'm-source';
+      source.textContent = (item.sourceRoots || [skillSourceRoot(item.sourcePath)]).join(' · ');
+      source.title = (item.sourcePaths || []).join(' · ');
+      b.querySelector('.m-name').append(source);
+    }
     box.appendChild(b);
   });
   box.hidden = false;
@@ -1247,12 +1253,21 @@ function renderSkillLists() {
     const normalized = String(value || '').replace(/\\/g, '/').replace(/\/$/, '');
     return /^[A-Za-z]:\//.test(normalized) ? normalized.toLowerCase() : normalized;
   };
+  const sourceRoot = value => {
+    const normalized = String(value || '').replace(/\\/g, '/');
+    const match = normalized.match(/(?:^|\/)(\.[^\/]+)(?:\/|$)/);
+    return match ? match[1] : I18n.t('本地');
+  };
   const registered = new Set((state.skillReferences || []).map(item => sourceKey(item.sourcePath)));
   const nameKey = value => String(value || '').trim().toLowerCase();
+  const enabledCliIds = (state.cliProfiles || []).filter(profile => profile.enabled).map(profile => profile.id);
   const external = (state.externalSkills || []).filter(skill => {
     if (!matches(skill) || registered.has(sourceKey(skill.sourcePath))) return false;
-    const scope = skill.nativeCliTypes || (skill.nativeCliType ? [skill.nativeCliType]
-      : (state.cliProfiles || []).filter(profile => profile.enabled).map(profile => profile.id));
+    // Native directories have an exact scope. A user-selected/shared source
+    // must remain available until every enabled Agent has a same-name reference.
+    const scope = Array.isArray(skill.nativeCliTypes) && skill.nativeCliTypes.length
+      ? skill.nativeCliTypes
+      : skill.nativeCliType ? [skill.nativeCliType] : enabledCliIds;
     const sameName = (state.skillReferences || []).filter(reference => nameKey(reference.name) === nameKey(skill.name));
     return !scope.length || !scope.every(cli => sameName.some(reference => reference.cliTypes.includes(cli)));
   });
@@ -1265,7 +1280,7 @@ function renderSkillLists() {
   }
   for (const skill of external) {
     const row = document.createElement('div'); row.className = 'skill-row';
-    row.innerHTML = `<details class="sk-detail"><summary><b>${esc(skill.name)}</b><span class="sk-source">${esc(skill.source || I18n.t('来源'))} · ${esc(skill.sourcePath)}</span><span class="sk-desc">${esc(skill.description || I18n.t('暂无描述'))}</span></summary>` +
+    row.innerHTML = `<details class="sk-detail"><summary><b>${esc(skill.name)}</b><span class="sk-source" title="${esc(skill.sourcePath)}">${esc(sourceRoot(skill.sourcePath))}</span><span class="sk-desc">${esc(skill.description || I18n.t('暂无描述'))}</span></summary>` +
       `<p class="hint">${esc(skill.description || I18n.t('暂无描述'))}</p></details>`;
     const button = actionButton(I18n.live(() => I18n.t('登记引用')), async () => {
       button.disabled = true;
@@ -1285,7 +1300,7 @@ function renderSkillLists() {
     const row = document.createElement('div'); row.className = 'skill-row';
     row.innerHTML = '<div class="sk-detail"><b>/' + esc(reference.alias) + '</b><span class="sk-desc">' +
       esc(reference.cliTypes.map(id => state.cliProfiles.find(profile => profile.id === id)?.label || id).join(' / ')) + (reference.availability === 'missing' ? I18n.t(' · 来源缺失') : '') +
-      '</span><span class="sk-source">' + esc(reference.sourcePath) + '</span></div>';
+      '</span><span class="sk-source" title="' + esc(reference.sourcePath) + '">' + esc(sourceRoot(reference.sourcePath)) + '</span></div>';
     row.appendChild(actionButton(I18n.live(() => I18n.t('移除引用')), async () => {
       try { await window.api.removeSkillReference(reference.id); await loadSkillLibrary(); }
       catch (error) { await AppDialog.alert(error.message); }

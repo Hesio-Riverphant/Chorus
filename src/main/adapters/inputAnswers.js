@@ -2,6 +2,7 @@
 const I18n = require('../../shared/i18n');
 
 // The same validation protects live protocol replies and deferred continuations.
+const SKIP_ANSWER = '__chorus_skip__';
 function validateAnswers(questions, answers) {
   if (!Array.isArray(questions) || !questions.length || questions.length > 10 ||
       !answers || typeof answers !== 'object' || Array.isArray(answers) ||
@@ -10,12 +11,12 @@ function validateAnswers(questions, answers) {
   for (const question of questions) {
     const values = answers[question.id]?.answers;
     if (!Array.isArray(values) || !values.length || values.length > 10 ||
-        values.some(value => typeof value !== 'string' || !value.trim() || value.length > 16000)) throw new Error(I18n.t('请回答所有问题'));
-    if (question.optionOnly && (values.length !== 1 || !question.options?.some(option => option.label === values[0]))) throw new Error(I18n.t('请选择提供的选项'));
+        values.some(value => typeof value !== 'string' || ((!value.trim()) && value !== SKIP_ANSWER) || value.length > 16000)) throw new Error(I18n.t('请回答所有问题'));
+    if (question.optionOnly && (values.length !== 1 || (values[0] !== SKIP_ANSWER && !question.options?.some(option => option.label === values[0])))) throw new Error(I18n.t('请选择提供的选项'));
     response[question.id] = { answers: values };
   }
   if (JSON.stringify(response).length > 64000) throw new Error(I18n.t('回答过长'));
   return response;
 }
 
-module.exports = { validateAnswers };
+module.exports = { validateAnswers, SKIP_ANSWER };

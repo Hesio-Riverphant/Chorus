@@ -9,6 +9,7 @@ const { test } = require('node:test');
 const Persistence = require('../src/main/store/persistence').constructor;
 const { readJson, writeJsonAtomic } = require('../src/main/store/jsonStore');
 const { normalizeBotProfile, getDefaultPersona, ROLE_PRESETS, MAX_AVATAR_BYTES } = require('../src/shared/botProfile');
+const { DEFAULTS } = require('../src/shared/constants');
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-room-persistence-'));
@@ -793,4 +794,19 @@ test('reported soft budget limits validate before persistence and survive restar
   assert.equal(reopened.getSettings().tokenBudgetPerRun, 12345); assert.equal(reopened.getSettings().costBudgetPerRun, 0.125);
   reopened.saveSettings({ tokenBudgetPerRun: null, costBudgetPerRun: 0 });
   assert.equal(reopened.getSettings().tokenBudgetPerRun, 0);
+});
+
+test('runtime guard settings reject malformed values before persistence', async t => {
+  const f = fixture(t), store = await f.open();
+  const original = { ...store.getSettings() };
+  for (const patch of [
+    { maxAutoTurns: NaN }, { maxAutoTurns: -1 }, { maxAutoTurns: 1.5 }, { maxAutoTurns: 100001 },
+    { perEdgeMentionCap: NaN }, { perEdgeMentionCap: -1 }, { perEdgeMentionCap: 1.5 }, { perEdgeMentionCap: 100001 },
+    { maxCliCallsPerRun: NaN }, { maxCliCallsPerRun: 0 }, { maxCliCallsPerRun: 1.5 }, { maxCliCallsPerRun: 100001 },
+  ]) assert.throws(() => store.saveSettings(patch), /运行护栏须为有效整数/);
+  assert.deepEqual(store.getSettings(), original);
+  store.saveSettings({ maxAutoTurns: null, perEdgeMentionCap: null, maxCliCallsPerRun: null });
+  assert.equal(store.getSettings().maxAutoTurns, null);
+  assert.equal(store.getSettings().perEdgeMentionCap, DEFAULTS.perEdgeMentionCap);
+  assert.equal(store.getSettings().maxCliCallsPerRun, DEFAULTS.maxCliCallsPerRun);
 });

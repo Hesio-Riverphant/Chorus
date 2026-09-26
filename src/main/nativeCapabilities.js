@@ -202,17 +202,13 @@ async function prepare(bot, cwd, { discovery = discover, signal } = {}) {
     if (inventory.truncated) throw new Error(I18n.t('能力清单尚未读取完整'));
   } catch (_) {
     signal?.throwIfAborted();
-    try {
-      inventory = await discovery(bot.cliType, cwd, { refresh: true, signal });
-      if (inventory.truncated) throw new Error(I18n.t('能力清单尚未读取完整'));
-    } catch (_) {
-      signal?.throwIfAborted();
-      if (bot.cliType === 'claude') return {
-        nativeArgs: ['--safe-mode', '--strict-mcp-config', '--tools', ''], nativeConfig: null,
-        warnings: [I18n.t('扩展清单无法读取，本次以无工具安全模式回答。请在设置 → MCP 与插件更新清单后重试。')], cleanup() {},
-      };
-      throw new Error(I18n.t('Codex 扩展清单无法读取，无法保证已取消的能力保持禁用。请在设置 → MCP 与插件更新清单，或明确选择沿用原生配置；尚未启动模型。'));
-    }
+    // Discovery connects native servers. Only an explicit settings refresh may
+    // perform it; a normal turn must never start an unchecked/disabled server.
+    if (bot.cliType === 'claude') return {
+      nativeArgs: ['--safe-mode', '--strict-mcp-config', '--tools', ''], nativeConfig: null,
+      warnings: [I18n.t('扩展清单无法读取，本次以无工具安全模式回答。请在设置 → MCP 与插件更新清单后重试。')], cleanup() {},
+    };
+    throw new Error(I18n.t('Codex 扩展清单无法读取，无法保证已取消的能力保持禁用。请在设置 → MCP 与插件更新清单，或明确选择沿用原生配置；尚未启动模型。'));
   }
   signal?.throwIfAborted();
   if (inventory.refreshError) warnings.push(inventory.refreshError);
@@ -241,12 +237,18 @@ async function prepare(bot, cwd, { discovery = discover, signal } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'convoke-settings-'));
   const filename = path.join(directory, 'extensions.json');
   const enabledPlugins = Object.fromEntries(Object.entries(plugins).map(([id, value]) => [id, value.enabled]));
-  fs.writeFileSync(filename, JSON.stringify({ enabledPlugins }), { encoding: 'utf8', flag: 'wx' });
-  const nativeArgs = ['--settings', filename];
-  const blocked = Object.keys(mcp).filter(id => !mcp[id].enabled);
+  const blocked = Object.keys(mcp).filter(id => !mcp[id].enabled || bot.permissionMode === 'read_only');
   if (blocked.some(id => !/^[A-Za-z0-9_.-]+$/.test(id))) {
     fs.rmSync(directory, { recursive: true }); throw new Error(I18n.t('MCP 名称暂不支持逐成员筛选，请使用原生配置'));
   }
+  // Tool permission filters run after MCP initialization. Native server policy
+  // prevents the connection itself, including stdio startup side effects.
+  try {
+    fs.writeFileSync(filename, JSON.stringify({ enabledPlugins,
+      deniedMcpServers: blocked.map(serverName => ({ serverName })),
+    }), { encoding: 'utf8', flag: 'wx' });
+  } catch (error) { fs.rmSync(directory, { recursive: true, force: true }); throw error; }
+  const nativeArgs = ['--settings', filename];
   if (blocked.length && bot.permissionMode !== 'read_only') nativeArgs.push('--disallowedTools', blocked.map(id => `mcp__${id}__*`).join(','));
   return { nativeArgs, nativeConfig: null, warnings, cleanup() { fs.rmSync(directory, { recursive: true, force: true }); } };
 }

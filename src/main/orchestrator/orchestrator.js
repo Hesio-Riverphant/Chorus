@@ -255,9 +255,13 @@ class Orchestrator {
       audienceBotIds: audienceFor(failed, persistence.getMessages(roomId), this.roomMembers(room)) });
     try {
       if (this.canDispatch(run, [bot])) {
-        persistence.updateMessage(roomId, messageId, { supersededBy: newId });
-        this.emit({ kind: 'message_update', roomId, id: messageId, patch: { supersededBy: newId } });
-        await this.runTurn(bot, run, slice, { messageId: newId, supersedes: failed.id, skillBlocks, skillScope });
+        const replacement = await this.runTurn(bot, run, slice, { messageId: newId, supersedes: failed.id, skillBlocks, skillScope });
+        // Keep the failed message retryable until the replacement has been
+        // persisted. A disk failure in runTurn must not create a dead link.
+        if (replacement?.message) {
+          persistence.updateMessage(roomId, messageId, { supersededBy: replacement.message.id });
+          this.emit({ kind: 'message_update', roomId, id: messageId, patch: { supersededBy: replacement.message.id } });
+        }
         await this.relayLoop(run);
       }
     } catch (err) {

@@ -370,7 +370,7 @@ test('stopAll drains all rooms and repeated stop calls are safe', async () => {
   assert.deepEqual(f.orchestrator.getActiveRuns(), []);
 });
 
-test('new estimates ignore legacy global custom prices, retain CLI report mode, and support Agent prices', async () => {
+test('provider API costs remain visible, CLI reports require opt-in, and Agent prices are supported', async () => {
   for (const mode of ['custom', 'cli', 'none']) {
     const f = fixture({ bots: 1, settings: { costMode: mode }, runBot: () => complete({ usage: {
       inputTokens: 2, outputTokens: 1, tokens: 3, cliCost: 0.2,
@@ -378,8 +378,8 @@ test('new estimates ignore legacy global custom prices, retain CLI report mode, 
     } }) });
     await f.orchestrator.handleHuman('r1', 'start');
     const usage = f.messages.r1.find((m) => m.authorType === 'bot').usage;
-    assert.equal(usage.cost, mode === 'cli' ? 0.2 : null);
-    assert.equal(usage.estimated, true);
+    assert.equal(usage.cost, mode === 'custom' ? 0.1 : mode === 'cli' ? 0.2 : null);
+    assert.equal(usage.estimated, mode === 'custom' ? false : true);
   }
   const f = fixture({ bots: 1, settings: { costMode: 'none' } });
   f.members[0].model = 'fixture-model';
@@ -785,6 +785,23 @@ test('retry retains reported failed attempt spend and does not supersede when ca
   assert.equal(f.calls.length, 1); assert.equal(failed.supersededBy, undefined);
   assert.equal(f.events.filter(e => e.kind === 'run_update').at(-1).run.budget.reportedTokens, 3);
   await f.orchestrator.handleHuman('r1', 'new explicit human round'); assert.equal(f.calls.length, 2);
+});
+
+test('retry keeps the failed message retryable when replacement persistence fails', async () => {
+  let failNextAdd = false;
+  const f = fixture({ bots: 1, runBot: () => complete({ error: 'fixture failure' }) });
+  const originalAdd = f.store.addMessage;
+  f.store.addMessage = (roomId, message) => {
+    if (failNextAdd) { failNextAdd = false; throw new Error('disk full'); }
+    return originalAdd(roomId, message);
+  };
+  await f.orchestrator.handleHuman('r1', 'first');
+  const failed = f.messages.r1.find(m => m.authorType === 'bot');
+  failNextAdd = true;
+  await f.orchestrator.retry('r1', failed.id);
+  assert.equal(failed.supersededBy, undefined);
+  await f.orchestrator.retry('r1', failed.id);
+  assert.ok(failed.supersededBy);
 });
 
 test('reported cost cap uses complete native counters and configured prices, not estimated tokens', async () => {

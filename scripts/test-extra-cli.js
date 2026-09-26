@@ -77,6 +77,17 @@ test('OpenCode normalizes actual JSON stream messages, tool failure and cache us
   assert.deepEqual(events[2], { type: 'error', payload: 'failed' });
 });
 
+test('OpenCode preserves unknown usage fields instead of fabricating zero counters', () => {
+  const events = [], acc = {};
+  const emit = (type, payload) => events.push({ type, payload });
+  EXTRA_PARSERS.opencode(JSON.stringify({ type: 'step_finish', part: {} }), emit, acc);
+  EXTRA_PARSERS.opencode(JSON.stringify({ type: 'step_finish', part: { tokens: { output: 4 } } }), emit, acc);
+  EXTRA_PARSERS.opencode(JSON.stringify({ type: 'step_finish', part: { tokens: { input: 6 }, cost: 0 } }), emit, acc);
+  assert.equal(events.length, 2);
+  assert.deepEqual(events[0].payload, { outputTokens: 4, cumulative: true });
+  assert.deepEqual(events[1].payload, { outputTokens: 4, inputTokens: 6, cliCost: 0, tokens: 10, cumulative: true });
+});
+
 test('contract evidence separates documented Pi no-session from unverified runtime and JSON details', () => {
   assert.equal(EXTRA_CONTRACTS.pi.noPersistenceFlag, '--no-session');
   assert.equal(EXTRA_CONTRACTS.pi.noPersistence, 'documented');

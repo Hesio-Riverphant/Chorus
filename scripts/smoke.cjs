@@ -305,6 +305,7 @@ async function run() {
   await require('./pricing-ui-checks.cjs')({ win, persistence, check });
   await require('./chorus-ui-checks.cjs')({ win, persistence, check });
   await require('./skill-source-ui-checks.cjs')({ win, persistence, check });
+  await require('./interaction-repair-ui-checks.cjs')({ win, check });
   await require('./history-ui-checks.cjs')({ win, persistence, check });
   await require('./role-avatar-ui-checks.cjs')({ win, persistence, check });
   await require('./runtime-input-ui-checks.cjs')({ win, persistence, check });

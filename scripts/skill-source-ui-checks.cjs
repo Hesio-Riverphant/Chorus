@@ -33,7 +33,10 @@ module.exports = async function skillSourceChecks({ win, persistence, check }) {
       state.skillReferences = [{ id: 'fixture', name: 'repeat', alias: 'repeat', sourcePath: 'D:/fixture/registered', cliTypes: ['claude'] }];
       renderSkillLists();
       const rows = document.querySelectorAll('#skillDiscover .skill-row');
-      const missingScopeVisible = rows.length === 2 && [...rows].some(row => row.textContent.includes('D:/fixture/shared'));
+      const missingScopeVisible = rows.length === 2 && [...rows].some(row => {
+        const source = row.querySelector('.sk-source');
+        return source?.textContent.includes('本地') && source?.getAttribute('title') === 'D:/fixture/shared';
+      });
       state.skillReferences.push({ id: 'second', name: 'Repeat', alias: 'repeat', sourcePath: 'D:/fixture/registered-codex', cliTypes: ['codex'] });
       renderSkillLists();
       return missingScopeVisible && document.querySelectorAll('#skillDiscover .skill-row').length === 0;
@@ -47,4 +50,3 @@ module.exports = async function skillSourceChecks({ win, persistence, check }) {
     } finally { I18n.setLanguage(prior); I18n.applyStatic(); }
   }));
 };
-

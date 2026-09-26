@@ -261,7 +261,13 @@ const SideChatUI = (() => {
       const follow = nearBottom(transcript);
       const text = row.querySelector('.bubble-text'); if (text) text.innerHTML = formatMessage(message.text);
       if (follow) transcript.scrollTop = transcript.scrollHeight;
-    } else if (event.kind === 'message_add' || event.kind === 'message_update') renderMessages('smart');
+    } else if (event.kind === 'message_update') {
+      const message = messages(event.roomId).find(item => item.id === event.id);
+      const row = [...transcript.querySelectorAll('[data-msg-id]')].find(item => item.dataset.msgId === event.id);
+      const follow = nearBottom(transcript);
+      if (!message || !patchStreamingMessage(row, message)) renderMessages('smart');
+      else if (follow) transcript.scrollTop = transcript.scrollHeight;
+    } else if (event.kind === 'message_add') renderMessages('smart');
     else if (event.kind === 'run_update') syncControls();
   }
 
@@ -286,6 +292,11 @@ const SideChatUI = (() => {
       button.className = 'mention-item' + (index === completion.index ? ' active' : '');
       const label = document.createElement('span'); label.className = 'm-name';
       label.textContent = `${completion.type === 'mention' ? '@' : '/'}${item.name}`; button.append(label);
+      if (completion.type === 'skill' && !item.command) {
+        const source = document.createElement('small'); source.className = 'm-source';
+        source.textContent = (item.sourceRoots || [skillSourceRoot(item.sourcePath)]).join(' · ');
+        source.title = (item.sourcePaths || []).join(' · '); label.append(source);
+      }
       if (item.description) { const hint = document.createElement('span'); hint.className = 'm-role'; hint.textContent = item.description.slice(0, 60); button.append(hint); }
       button.addEventListener('mousedown', (event) => event.preventDefault());
       button.addEventListener('click', () => choose(item)); popup.append(button);

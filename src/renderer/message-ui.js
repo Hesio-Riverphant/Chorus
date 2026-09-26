@@ -23,52 +23,77 @@ function setActionIcon(button, label) {
 }
 
 function renderActivities(row, activities) {
-  row.querySelector('.goal-progress')?.remove();
   const roomId = row.dataset.roomId || state.currentRoomId;
   const message = messages(roomId).find(item => item.id === row.dataset.msgId);
   const botName = roomMembers(state.rooms.find(room => room.id === roomId)).find(bot => bot.id === message?.authorId)?.name || I18n.t('成员');
-  const old = row.querySelector('.activities');
-  // Read actual open state before replacing nodes; queued toggle events need not
-  // have fired yet when a native streaming update arrives.
-  rememberActivityExpansion(row);
-  old?.remove();
   const body = row.querySelector('.msg-body'), bubble = row.querySelector('.bubble');
+  let goal = row.querySelector('.goal-progress');
   if (message?.goal) {
-    const goal = document.createElement('div'); goal.className = 'goal-progress';
+    if (!goal) { goal = document.createElement('div'); goal.className = 'goal-progress'; body?.insertBefore(goal, bubble); }
     I18n.write(goal, () => I18n.t('目标 · ') + ({ active: I18n.t('进行中'), complete: I18n.t('已完成'), ended: I18n.t('原生目标已结束'), paused: I18n.t('已暂停'), blocked: I18n.t('受阻'), usageLimited: I18n.t('达到原生用量限制'), budgetLimited: I18n.t('达到原生预算限制') }[message.goal.status] || message.goal.status));
-    body?.insertBefore(goal, bubble);
+  } else goal?.remove();
+  let timeline = row.querySelector('.activities');
+  if (!activities.length) { timeline?.remove(); delete row.dataset.activitiesSignature; return; }
+  const signature = JSON.stringify(activities);
+  if (timeline && row.dataset.activitiesSignature === signature) return;
+  row.dataset.activitiesSignature = signature;
+  if (!timeline) {
+    timeline = document.createElement('section'); timeline.className = 'activities';
+    I18n.attr(timeline, 'aria-label', () => I18n.t('执行过程')); body?.insertBefore(timeline, bubble);
   }
-  if (!activities.length) return;
-  const timeline = document.createElement('section'); timeline.className = 'activities'; I18n.attr(timeline, 'aria-label', () => I18n.t('执行过程'));
+  const existing = new Map([...timeline.children].map(entry => [entry.dataset.activityId, entry]));
   const ordered = activities.map((activity, index) => ({ activity, index })).sort((a, b) => (a.activity.order ?? a.index) - (b.activity.order ?? b.index));
-  for (const { activity } of ordered) {
-    if (activity.phase === 'commentary') {
-      const progress = document.createElement('div'); progress.className = 'process-output'; progress.dataset.activityId = activity.id;
-      progress.innerHTML = formatMessage(activity.detail || ''); timeline.append(progress); continue;
+  for (const [position, { activity }] of ordered.entries()) {
+    const id = String(activity.id), commentary = activity.phase === 'commentary';
+    let entry = existing.get(id); existing.delete(id);
+    if (entry && (entry.tagName === 'DETAILS') === commentary) { entry.remove(); entry = null; }
+    if (!entry) {
+      entry = document.createElement(commentary ? 'div' : 'details'); entry.dataset.activityId = id;
+      if (commentary) entry.className = 'process-output';
+      else {
+        const expansionKey = roomId + ':' + row.dataset.msgId + ':' + id;
+        entry.open = activityExpansion.get(expansionKey) === true;
+        entry.addEventListener('toggle', () => { if (entry.isConnected) activityExpansion.set(expansionKey, entry.open); });
+        entry.append(document.createElement('summary'), document.createElement('pre'));
+      }
     }
-    const entry = document.createElement('details'); entry.dataset.activityId = String(activity.id);
-    const expansionKey = `${roomId}:${row.dataset.msgId}:${activity.id}`;
-    entry.open = activityExpansion.get(expansionKey) === true;
-    entry.addEventListener('toggle', () => { if (entry.isConnected) activityExpansion.set(expansionKey, entry.open); });
-    const title = document.createElement('summary');
+    // Never detach an unchanged control: pointerdown/up may span stream events.
+    if (timeline.children[position] !== entry) timeline.insertBefore(entry, timeline.children[position] || null);
+    const itemSignature = JSON.stringify(activity);
+    if (entry.activitySignature === itemSignature) continue;
+    entry.activitySignature = itemSignature; entry.activity = activity;
+    if (commentary) { entry.innerHTML = formatMessage(activity.detail || ''); continue; }
+    const title = entry.querySelector('summary'), text = entry.querySelector('pre');
     const status = { running: I18n.t('进行中'), done: I18n.t('已完成'), error: I18n.t('失败'), aborted: I18n.t('已中断'), unknown: I18n.t('最终状态未知') }[activity.status] || activity.status;
     I18n.write(title, () => activity.kind === 'reasoning' ? [I18n.t('思考'), status].filter(Boolean).join(' · ')
       : [activity.name || activity.kind, status, activity.summary].filter(Boolean).join(' · '));
-    const text = document.createElement('pre'); text.textContent = activity.detail || '';
-    entry.append(title, text);
+    if (text.textContent !== (activity.detail || '')) text.textContent = activity.detail || '';
+    entry.querySelectorAll('button').forEach(button => button.remove());
     if (activity.kind === 'subagent') {
       const button = document.createElement('button'); button.type = 'button'; button.className = 'subagent-card';
-      I18n.write(button, () => I18n.tpl`查看子代理 · ${activity.name || I18n.t('子代理')}`);
-      button.addEventListener('click', () => window.WorkbenchUI?.openAgentDetail({ roomId, messageId: message?.id, botName, activity })); entry.append(button);
+      I18n.write(button, () => I18n.t('查看子代理 ·') + ' ' + (activity.name || I18n.t('子代理')));
+      button.addEventListener('click', () => window.WorkbenchUI?.openAgentDetail({ roomId, messageId: message?.id, botName, activity: entry.activity })); entry.append(button);
     }
     for (const file of activity.files || []) {
       const button = document.createElement('button'); button.type = 'button'; button.className = 'activity-file';
-      I18n.write(button, () => `${activity.status === 'done' ? I18n.t('被编辑文件') : I18n.t('编辑目标')} · ${file}`); button.title = file;
+      I18n.write(button, () => (activity.status === 'done' ? I18n.t('被编辑文件') : I18n.t('编辑目标')) + ' · ' + file); button.title = file;
       button.addEventListener('click', () => window.WorkbenchUI?.openActivityFile(roomId, file).catch(error => AppDialog.alert(error.message))); entry.append(button);
     }
-    timeline.append(entry);
   }
-  body?.insertBefore(timeline, bubble);
+  for (const entry of existing.values()) entry.remove();
+}
+
+function patchStreamingMessage(row, message) {
+  if (!row || message.status !== 'streaming' || !row.querySelector('.state-tag.streaming') || message.error) return false;
+  const text = row.querySelector('.bubble-text');
+  const formatted = formatMessage(message.text);
+  if (text && text.innerHTML !== formatted) text.innerHTML = formatted;
+  renderActivities(row, message.activities || []);
+  if (message.usage) {
+    const foot = row.querySelector('.foot-row > :first-child');
+    if (foot) { foot.className = 'foot'; foot.textContent = usageText(message.usage, message.costInfo); }
+  }
+  return true;
 }
 
 function transcriptText(roomId) {

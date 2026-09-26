@@ -10,7 +10,7 @@ Chorus is a local desktop app that connects installed Agent CLIs. Add different 
 
 Requires **Windows 10 (1809+)/11 x64 or Ubuntu 24.04 x64** and at least one installed, authenticated Agent CLI. The x64 package runs on Intel/AMD x86-64 processors. Windows 11 is tested; Windows 10 has not had a hardware acceptance run. Desktop packages include the runtime; Node.js is not required.
 
-1. Run `Chorus-0.6.1-windows-x64-setup.exe`, or extract the complete matching zip and run `Chorus.exe`.
+1. Run the current `Chorus-<version>-windows-x64-setup.exe` from the Release page, or extract the complete matching zip and run `Chorus.exe`.
 2. Open **Settings → Agent connections**, scan and enable an agent, then create a member, fetch its model list and test the connection.
 3. Create a room, choose its project directory and members, and send a task. Inspect tools, file changes and usage as it runs, or stop it at any time.
 
@@ -21,7 +21,7 @@ Both Windows editions include `Uninstall Chorus.cmd`. Close all Chorus copies, r
 On Ubuntu, install the recommended `.deb`, then open Chorus from the application menu:
 
 ```sh
-sudo apt install ./Chorus-0.6.1-linux-amd64.deb
+sudo apt install ./Chorus-0.6.3-linux-amd64.deb
 # Uninstall while retaining chat data
 sudo apt remove chorus
 ```

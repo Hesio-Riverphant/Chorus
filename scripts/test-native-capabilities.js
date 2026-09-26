@@ -36,12 +36,12 @@ test('removed selections warn and preserve known disabled capabilities without b
   assert.equal(Object.hasOwn(result.nativeConfig.mcp_servers, 'gone'), false);
 });
 
-test('unreadable inventory refreshes once; Claude can answer with all custom tools off', async () => {
+test('unreadable inventory never starts a scan; Claude can answer with all custom tools off', async () => {
   const calls = [];
   const result = await prepare({ cliType: 'claude', nativeCapabilities: { mode: 'selected' } }, process.cwd(), {
     discovery: async (_type, _cwd, options) => { calls.push(options.refresh); throw new Error('fixture missing'); },
   });
-  assert.deepEqual(calls, [false, true]);
+  assert.deepEqual(calls, [false]);
   assert.deepEqual(result.nativeArgs, ['--safe-mode', '--strict-mcp-config', '--tools', '']);
   assert.match(result.warnings[0], /无工具安全模式/);
   // Codex has no proven global disable override. Do not silently inherit a wider allowlist.
@@ -54,9 +54,21 @@ test('Claude selection writes only temporary invocation settings and preserves r
   const result = await prepare({ cliType: 'claude', permissionMode: 'read_only', nativeCapabilities: { mode: 'selected', mcp: [], plugins: [] } }, process.cwd(),
     { discovery: async () => ({ items: [{ id: 'local@fixture', kind: 'plugin' }, { id: 'local', kind: 'mcp' }] }) });
   const file = result.nativeArgs[1];
-  assert.deepEqual(JSON.parse(fs.readFileSync(file)), { enabledPlugins: { 'local@fixture': false } });
+  assert.deepEqual(JSON.parse(fs.readFileSync(file)), { enabledPlugins: { 'local@fixture': false }, deniedMcpServers: [{ serverName: 'local' }] });
   assert.equal(result.nativeArgs.includes('--disallowedTools'), false);
   result.cleanup(); assert.equal(fs.existsSync(path.dirname(file)), false);
+});
+test('Claude server selection denies initialization of disabled servers while preserving selected servers', async () => {
+  const result = await prepare({ cliType: 'claude', nativeCapabilities: { mode: 'selected', mcp: ['keep'], plugins: ['active@fixture'] } }, process.cwd(),
+    { discovery: async (_type, _cwd, options) => {
+      assert.equal(options.scanIfMissing, false); assert.equal(options.refresh, false);
+      return { items: [{ id: 'keep', kind: 'mcp' }, { id: 'off', kind: 'mcp' }, { id: 'active@fixture', kind: 'plugin' }] };
+    } });
+  try {
+    assert.deepEqual(JSON.parse(fs.readFileSync(result.nativeArgs[1])), { enabledPlugins: { 'active@fixture': true }, deniedMcpServers: [{ serverName: 'off' }] });
+    assert.equal(result.nativeArgs.includes('mcp__off__*'), true);
+    assert.equal(result.nativeArgs.includes('--strict-mcp-config'), false);
+  } finally { result.cleanup(); }
 });
 test('metadata scan flags incomplete marketplaces before use', async () => {
   let closed = false;

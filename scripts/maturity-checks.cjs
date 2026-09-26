@@ -17,7 +17,7 @@ module.exports = async function maturityChecks({ win, persistence, orchestrator,
     input.dispatchEvent(new Event('input', { bubbles: true }));
     const box = document.querySelector(side ? '#sideChatCompletion' : '#slashBox');
     const button = [...box.querySelectorAll('.mention-item')].find(item => side
-      ? item.querySelector('.m-name')?.textContent === '/' + name : item.querySelector('.m-name')?.textContent === name);
+      ? item.querySelector('.m-name')?.firstChild?.textContent === '/' + name : item.querySelector('.m-name')?.firstChild?.textContent === name);
     if (!button) throw new Error(`Missing slash entry ${side ? 'side' : 'main'} /${name}`);
     button.click();
   }, side, query, name);
@@ -78,7 +78,7 @@ module.exports = async function maturityChecks({ win, persistence, orchestrator,
     const input = document.querySelector('#sideChatInput'); input.focus(); input.value = '/'; input.setSelectionRange(1, 1); input.dispatchEvent(new Event('input', { bubbles: true }));
   });
   check('侧聊斜杠菜单同时提供命令与技能', await page(() => {
-    const values = [...document.querySelectorAll('#sideChatCompletion .m-name')].map(item => item.textContent);
+    const values = [...document.querySelectorAll('#sideChatCompletion .m-name')].map(item => item.firstChild?.textContent);
     return ['/model', '/plan', '/goal', '/context', '/mcp', '/plugins', '/stop', '/maturity-skill'].every(value => values.includes(value));
   }));
   await slash(true, 'maturity-skill', 'maturity-skill');
@@ -131,7 +131,7 @@ module.exports = async function maturityChecks({ win, persistence, orchestrator,
   check('整页刷新仍显示正在执行的计划模式', await page(() => !document.querySelector('#sideChatMode').hidden && document.querySelector('#sideChatMode').textContent.includes('计划')));
   await page(() => {
     const form = document.querySelector('#sideChatMessages .native-question');
-    [...form.querySelectorAll('button')].find(button => button.textContent === 'Option B').click(); form.requestSubmit();
+    [...form.querySelectorAll('.native-question-choice')].find(button => button.optionLabel === 'Option B').click(); form.requestSubmit();
   });
   check('回答正确路由并让侧聊继续完成', await waitFor(() => !document.querySelector('#sideChatMessages .native-question') && document.querySelector('#sideChatMessages').textContent.includes('Synthetic reply')) && fixture.answers.length === 1 && fixture.answers[0].botId === sideBotId && fixture.answers[0].answers.choice.answers[0] === 'Option B');
   check('补充答案只用于运行协议且不写聊天正文', !JSON.stringify(persistence.getMessages(side.id)).includes('Option B') && !orchestrator.isBusy(side.id));

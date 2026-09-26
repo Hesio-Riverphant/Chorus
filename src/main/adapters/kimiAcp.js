@@ -9,7 +9,7 @@ const { resolveExecutable } = require('./resolveExecutable');
 const { locateCliExecutable } = require('../cliDiscovery');
 const { safeText, emitActivity } = require('./activities');
 const { kimiToolSubagent } = require('./subagents');
-const { validateAnswers } = require('./inputAnswers');
+const { validateAnswers, SKIP_ANSWER } = require('./inputAnswers');
 const { createDiagnostics } = require('./diagnostics');
 
 // Official Kimi ACP configOptions contract. Session overrides never rewrite
@@ -91,6 +91,11 @@ function runKimiAcp({ bot, prompt, workspace, cliSettings = {}, noBytesTimeoutMs
     const input = inputs.get(requestId);
     if (closed || aborted || settled || !input) throw new Error(I18n.t('该提问已结束，请重新发送消息'));
     const values = validateAnswers(input.questions, answers).q0.answers;
+    if (values.length === 1 && values[0] === SKIP_ANSWER) {
+      write({ id: input.nativeId, result: { outcome: { outcome: 'cancelled' } } });
+      removeInput(requestId);
+      return { ok: true };
+    }
     const index = values.length === 1 ? input.questions[0].options.findIndex(option => option.label === values[0]) : -1;
     if (index < 0) throw new Error(I18n.t('回答格式无效'));
     write({ id: input.nativeId, result: { outcome: { outcome: 'selected', optionId: input.optionIds[index] } } });

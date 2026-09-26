@@ -20,6 +20,15 @@ function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function boundedInteger(value, { min = 0, max, fallback, nullable = false } = {}) {
+  if (value == null && nullable) return null;
+  if (value == null && fallback !== undefined) return fallback;
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > max) {
+    throw new Error(I18n.t('运行护栏须为有效整数'));
+  }
+  return value;
+}
+
 function validateData(value, valid, file) {
   if (!valid(value)) {
     const err = new Error(I18n.tpl`数据格式无效，已保留原文件：${file}`);
@@ -1095,6 +1104,18 @@ class Persistence {
       const budget = settings.historyTokenBudget ?? 0;
       if (!Number.isSafeInteger(budget) || budget < 0 || budget > 200000) throw new Error(I18n.t('旧历史 token 预算须为 0–200000 的整数'));
       next.historyTokenBudget = budget;
+    }
+    if (Object.hasOwn(settings, 'maxAutoTurns')) {
+      next.maxAutoTurns = boundedInteger(settings.maxAutoTurns, { min: 0, max: 100000, nullable: true });
+    }
+    if (Object.hasOwn(settings, 'perEdgeMentionCap')) {
+      next.perEdgeMentionCap = boundedInteger(settings.perEdgeMentionCap, { min: 0, max: 100000, fallback: DEFAULTS.perEdgeMentionCap });
+    }
+    if (Object.hasOwn(settings, 'maxCliCallsPerRun')) {
+      next.maxCliCallsPerRun = boundedInteger(settings.maxCliCallsPerRun, { min: 1, max: 100000, fallback: DEFAULTS.maxCliCallsPerRun });
+    }
+    if (Object.hasOwn(settings, 'catchupMessages')) {
+      next.catchupMessages = boundedInteger(settings.catchupMessages, { min: 0, max: 500, fallback: DEFAULTS.catchupMessages });
     }
     if (Object.hasOwn(settings, 'cliProfiles')) {
       next.cliProfiles = cliRegistry.normalizeProfiles(settings.cliProfiles);

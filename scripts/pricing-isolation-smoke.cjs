@@ -65,4 +65,3 @@ app.whenReady().then(async () => {
   console.log(results.filter(x => x.ok).length + '/' + results.length + ' checks passed');
   app.exit(results.every(x => x.ok) ? 0 : 1);
 }).catch(error => { console.error(error); app.exit(2); });
-

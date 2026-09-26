@@ -19,6 +19,8 @@ class Element {
     return descendants.filter(child => selector.startsWith('.') ? child.className.split(' ').includes(selector.slice(1)) : child.tagName === selector);
   }
   addEventListener() {}
+  setAttribute(name, value) { this.attributes ||= {}; this.attributes[name] = String(value); }
+  getAttribute(name) { return this.attributes?.[name] ?? null; }
   showModal() { this.open = true; }
   close() { this.open = false; }
 }
@@ -86,6 +88,7 @@ test('native side questions keep typed answers across renders and submit through
   input.value = 'typed fixture'; input.oninput();
   f.NativeInputUI.render('side');
   assert.equal(f.side.querySelectorAll('input')[0].value, 'typed fixture');
+  assert.equal(f.side.querySelectorAll('input')[0], input);
   const form = f.side.querySelectorAll('.native-question')[0];
   await form.onsubmit({ preventDefault() {} });
   assert.equal(f.calls.length, 1);
@@ -102,10 +105,69 @@ test('native question rejection preserves the form and stop clears stale input',
   f.NativeInputUI.event({ kind: 'input_request', roomId: 'side', botId: 'side_bot', messageId: 'm',
     requestId: 'q', questions: [{ id: 'a', question: 'Fixture?' }] });
   const form = f.side.querySelectorAll('.native-question')[0];
+  const input = form.querySelectorAll('input')[0]; input.value = 'reply'; input.oninput();
   await form.onsubmit({ preventDefault() {} });
   assert.equal(f.side.querySelectorAll('.native-question').length, 1);
   assert.equal(form.querySelectorAll('button').at(-1).disabled, false);
   assert.equal(form.querySelectorAll('p')[0].textContent, 'fixture rejected');
   f.NativeInputUI.event({ kind: 'run_update', roomId: 'side', run: { status: 'stopped' } });
   assert.equal(f.side.querySelectorAll('.native-question').length, 0);
+});
+
+test('native question skip submits the application skip marker for every question', async () => {
+  const f = fixture();
+  f.NativeInputUI.event({ kind: 'input_request', roomId: 'side', botId: 'side_bot', messageId: 'skip-message',
+    requestId: 'skip-request', questions: [{ id: 'free', question: 'Free?' }, { id: 'choice', question: 'Choice?', optionOnly: true, options: [{ label: 'A' }] }] });
+  const form = f.side.querySelectorAll('.native-question')[0];
+  const skip = form.querySelectorAll('button').find(button => button.className.includes('native-question-skip'));
+  await skip.onclick();
+  assert.deepEqual(JSON.parse(JSON.stringify(f.calls[0].answers)), { free: { answers: ['__chorus_skip__'] }, choice: { answers: ['__chorus_skip__'] } });
+  assert.equal(f.side.querySelectorAll('.native-question').length, 0);
+});
+
+test('question pages retain choices and visit unanswered pages before submitting', async () => {
+  const f = fixture();
+  f.NativeInputUI.event({ kind: 'input_request', roomId: 'side', botId: 'side_bot', messageId: 'page-message', requestId: 'pages',
+    questions: [{ id: 'one', question: 'One?', options: [{ label: 'A' }] }, { id: 'two', question: 'Two?', options: [{ label: 'B' }] }] });
+  let form = f.side.querySelectorAll('.native-question')[0];
+  const choice = form.querySelectorAll('.native-question-choice')[0]; choice.onclick();
+  assert.equal(choice.getAttribute('aria-pressed'), 'true');
+  await form.onsubmit({ preventDefault() {} }); assert.equal(f.calls.length, 0);
+  form = f.side.querySelectorAll('.native-question')[0];
+  assert.equal(form.querySelectorAll('.native-question-page')[0].textContent, '2 of 2');
+  form.querySelectorAll('.native-question-choice')[0].onclick();
+  await form.onsubmit({ preventDefault() {} });
+  assert.deepEqual(JSON.parse(JSON.stringify(f.calls[0].answers)), { one: { answers: ['A'] }, two: { answers: ['B'] } });
+});
+
+test('question close keeps the request and reopening restores the draft', () => {
+  const f = fixture();
+  f.NativeInputUI.event({ kind: 'input_request', roomId: 'side', botId: 'side_bot', messageId: 'm', requestId: 'close', questions: [{ id: 'answer', question: 'Choose' }] });
+  let form = f.side.querySelectorAll('.native-question')[0];
+  const input = form.querySelectorAll('input')[0]; input.value = 'draft'; input.oninput();
+  form.querySelectorAll('.native-question-close')[0].onclick();
+  form = f.side.querySelectorAll('.native-question')[0];
+  assert.equal(form.querySelectorAll('input').length, 0); assert.equal(f.calls.length, 0);
+  form.querySelectorAll('button').at(-1).onclick();
+  assert.equal(f.side.querySelectorAll('input')[0].value, 'draft');
+});
+
+test('native input submission is claimed once across repeated clicks and renders', async () => {
+  const f = fixture(); let finish;
+  f.api.respondNativeInput = payload => { f.calls.push(payload); return new Promise(resolve => { finish = resolve; }); };
+  const record = { kind: 'input_request', roomId: 'side', botId: 'side_bot', messageId: 'm', requestId: 'duplicate', questions: [{ id: 'a', question: 'Choose', options: [{ label: 'A' }] }] };
+  f.NativeInputUI.event(record);
+  const form = f.side.querySelectorAll('.native-question')[0]; form.querySelectorAll('.native-question-choice')[0].onclick();
+  const first = form.onsubmit({ preventDefault() {} });
+  f.NativeInputUI.event(record); await form.onsubmit({ preventDefault() {} });
+  await form.querySelectorAll('.native-question-skip')[0].onclick();
+  assert.equal(f.calls.length, 1); finish(true); await first;
+});
+
+test('slash skills retain distinct source roots when aliases merge', () => {
+  const f = fixture();
+  f.state.importedSkills = [{ alias: 'shared', name: 'Shared', cliTypes: ['codex'], sourcePath: 'C:/fixture/.codex/skills/shared/SKILL.md' },
+    { alias: 'shared', name: 'Shared', cliTypes: ['claude'], sourcePath: 'C:/fixture/.claude/skills/shared/SKILL.md' }];
+  const skill = f.context.window.getComposerSlashItems('side', 'skill').find(item => item.name === 'shared');
+  assert.deepEqual(Array.from(skill.sourceRoots), ['.codex', '.claude']); assert.equal(skill.sourcePaths.length, 2);
 });

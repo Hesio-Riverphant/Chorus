@@ -70,7 +70,7 @@ test('activity count is bounded while updates of existing activities still work'
 
 test('Agent prices preserve optional CLI reports and zero rates', () => {
   const bot = { cliType: 'codex', model: 'model-A' };
-  const usage = { inputTokens: 1e6, outputTokens: 5e5, cliCost: 100, apiCost: 100 };
+  const usage = { inputTokens: 1e6, outputTokens: 5e5, cliCost: 100 };
   const prices = { codex: [{ enabled: true, model: 'model-A', inputPerMillion: 2, outputPerMillion: 4 }] };
   assert.equal(calculateCost(bot, usage, 1e6, 5e5, 'cli', 0, prices).cost, 4);
   assert.equal(calculateCost({ ...bot, model: 'different' }, {}, 1, 1, 'none', 0, prices).cost, null);

@@ -43,3 +43,7 @@ test('settings normalization rejects invalid and duplicate tariffs', () => {
     { ...config.codex[0], peakPeriods: [{ days: [7], start: '09:00', end: '12:00' }] }]) assert.throws(() => normalizeAgentPricing({ codex: [tariff] }));
   assert.throws(() => normalizeAgentPricing({ codex: [rates, rates] }), /重复/);
 });
+test('provider API cost wins over local tariff and display mode', () => {
+  const result = calculateCost(bot, { ...usage, apiCost: 0.1234 }, usage.inputTokens, usage.outputTokens, 'none', Date.now(), config);
+  assert.deepEqual(result, { cost: 0.1234, estimated: false, costSource: 'api' });
+});

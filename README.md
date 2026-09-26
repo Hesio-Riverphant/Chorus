@@ -10,7 +10,7 @@ Chorus 是本地桌面应用，连接已安装的 Agent CLI。把不同模型加
 
 需要 **Windows 10（1809+）/11 x64 或 Ubuntu 24.04 x64**，以及至少一个已安装、已登录的 Agent CLI。x64 包适用于 Intel/AMD 的 x86-64 处理器；Windows 11 已实测，Windows 10 尚未实机验收。安装包内置桌面运行环境，无需另装 Node.js。
 
-1. 运行 `Chorus-0.6.1-windows-x64-setup.exe` 安装，或完整解压同版本 zip 后运行 `Chorus.exe`。
+1. 运行 Release 页面提供的当前版本 `Chorus-<version>-windows-x64-setup.exe` 安装，或完整解压同版本 zip 后运行 `Chorus.exe`。
 2. 打开 **设置 → Agent 接入**，扫描并启用 Agent；创建成员，获取模型列表并测试连接。
 3. 新建房间，选择项目目录和成员，输入任务。调用过程中可以查看工具、文件变更、用量，也可以随时停止。
 
@@ -21,7 +21,7 @@ Windows 安装版和便携版均附带 `Uninstall Chorus.cmd`。退出所有 Cho
 Ubuntu 推荐安装 `.deb`，然后从应用菜单打开 Chorus：
 
 ```sh
-sudo apt install ./Chorus-0.6.1-linux-amd64.deb
+sudo apt install ./Chorus-0.6.3-linux-amd64.deb
 # 卸载，保留聊天数据
 sudo apt remove chorus
 ```

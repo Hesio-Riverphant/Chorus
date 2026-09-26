@@ -118,15 +118,27 @@ function parseOpenCode(line, emit, acc) {
   if (item.type === 'error') emit('error', item.error?.data?.message || item.error?.message || I18n.t('OpenCode 运行失败'));
   if (item.type === 'step_finish') {
     const tokens = part.tokens || {};
-    acc.openUsage ||= { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheCreationInputTokens: 0, reasoningTokens: 0, cliCost: 0 };
-    const count = value => Number.isFinite(value) && value >= 0 ? value : 0;
-    acc.openUsage.inputTokens += count(tokens.input) + count(tokens.cache?.read) + count(tokens.cache?.write);
-    acc.openUsage.outputTokens += count(tokens.output);
-    acc.openUsage.cachedInputTokens += count(tokens.cache?.read);
-    acc.openUsage.cacheCreationInputTokens += count(tokens.cache?.write);
-    acc.openUsage.reasoningTokens += count(tokens.reasoning);
-    acc.openUsage.cliCost += count(part.cost);
-    emit('usage', { ...acc.openUsage, tokens: acc.openUsage.inputTokens + acc.openUsage.outputTokens, cumulative: true });
+    acc.openUsage ||= {};
+    const count = value => Number.isFinite(value) && value >= 0 ? value : null;
+    const add = (key, value) => {
+      const n = count(value);
+      if (n !== null) acc.openUsage[key] = (acc.openUsage[key] || 0) + n;
+    };
+    add('inputTokens', tokens.input);
+    add('inputTokens', tokens.cache?.read);
+    add('inputTokens', tokens.cache?.write);
+    add('outputTokens', tokens.output);
+    add('cachedInputTokens', tokens.cache?.read);
+    add('cacheCreationInputTokens', tokens.cache?.write);
+    add('reasoningTokens', tokens.reasoning);
+    add('cliCost', part.cost);
+    if (Object.keys(acc.openUsage).length) {
+      const usage = { ...acc.openUsage };
+      if (Number.isFinite(usage.inputTokens) && Number.isFinite(usage.outputTokens)) {
+        usage.tokens = usage.inputTokens + usage.outputTokens;
+      }
+      emit('usage', { ...usage, cumulative: true });
+    }
   }
 }
 

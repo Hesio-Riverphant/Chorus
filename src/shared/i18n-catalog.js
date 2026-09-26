@@ -1,6 +1,10 @@
 'use strict';
 // Application-owned UI text. User content and native agent output never enter this catalog.
 (function(root,factory){if(typeof module==='object'&&module.exports)module.exports=factory();else root.I18nCatalog=factory();})(typeof globalThis!=='undefined'?globalThis:this,()=>({
+  "或自行撰写回复": "Or write your own answer",
+  "暂时收起问题": "Collapse question for now",
+  "请求授权": "Approval requested",
+  "问题": "Question",
   "请选择提供的选项": "Choose one of the provided options",
   "程序需输出 Chorus JSONL 事件：text、error，以及带版本和顺序号的 subagent 快照。子代理可进入侧边工作台；具体格式见 docs/CLI.md。原生 JSON 输出需先适配。": "The program must emit Chorus JSONL events: text, error, and versioned, sequenced subagent snapshots. Children open in the side workbench; see docs/CLI.md for the contract. Native JSON formats require an adapter.",
   "最终状态未知": "Final status unknown",
@@ -35,6 +39,7 @@
   "每轮费用软上限 USD（0 = 不限）": "Cost soft limit per round in USD (0 = unlimited)",
   "达到软上限后仅停止派发新任务，已开始的任务继续完成，因此可能超额。按原生已报告用量与已配置单价或 CLI 费用计算；未知用量不视为零，不用文本估算阻止任务。每个房间独立，新的人类消息重新计额，重试延续原轮次。": "At the soft limit, only new tasks stop dispatching. Active tasks finish and may exceed the limit. Counts use native reported usage and configured rates or CLI cost; unknown usage stays unknown and text estimates never block work. Each room is independent. A new human message starts a new allowance; retries retain the original round.",
   "软预算须为有效非负数，Token 须为整数": "Soft limits must be finite non-negative numbers; tokens must be a whole number.",
+  "运行护栏须为有效整数": "Runtime guard values must be finite whole numbers within the allowed range.",
   "已报告 Token 达到本轮软上限": "Reported tokens reached this round’s soft limit",
   "已报告用量费用达到本轮软上限": "Reported usage cost reached this round’s soft limit",
   "{0}；未发言：{1}。已开始的任务继续完成。": "{0}; not dispatched: {1}. Active tasks will finish.",
@@ -104,6 +109,10 @@
   "上次更新时已连接": "Connected at last refresh",
   "上次更新未连接，请检查原生 Agent 的登录和授权": "Not connected at last refresh. Check the native agent's login and permissions.",
   "不显示成本": "Hide cost",
+  "自动成本": "Automatic cost",
+  "API 实报优先，其次使用已配置单价；否则只显示 token": "Provider-reported cost first, then configured rates; otherwise show tokens only",
+  "CLI 自报兜底": "CLI reported cost fallback",
+  "无 API 实报或已配置单价时使用，可能与实际账单不符": "Used when no provider cost or configured rate is available; may differ from your bill",
   "与历史条数一起限制每次带入的旧消息；当前输入和本轮协作不裁断。可先设 4000，再按需要调整。全部消息仍保存在本地。": "Limits previous messages included in each call, alongside the history count. Current input and the current round are kept intact. Start with 4,000 and adjust as needed. All messages remain stored locally.",
   "个侧边聊天将保留为独立房间。": "side chats will remain as independent rooms.",
   "个候选 ·": "candidates ·",
